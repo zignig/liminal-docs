@@ -12,6 +12,8 @@ use iroh::SecretKey;
 use serde_derive::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
+use crate::notes::Note;
+
 // Application Configuration
 // Application saved config
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -20,7 +22,8 @@ pub struct Config {
     pub download_path: PathBuf,
     pub store_path: PathBuf,
     pub secret_key: String,
-    pub doc_key: Option<String>
+    pub doc_key: Option<String>,
+    pub author: Option<String>,
 }
 
 // Update Callback
@@ -33,6 +36,9 @@ pub enum Event {
     ProgressFinished(String),
     ProgressComplete(String),
     SendTicket(String),
+    SendConfig(Config),
+    NoteList(Vec<String>),
+    SendNote(Note),
     Tick(u64),
     StopTick,
     Finished,
@@ -41,6 +47,10 @@ pub enum Event {
 // Outgoing Commands
 pub enum Command {
     Setup { callback: UpdateCallback },
+    DocTicket(String),
+    DocId(String),
+    GetNotes,
+    GetNote(String),
     Send(PathBuf),
     Fetch((String, PathBuf)),
     SendConfig(Config),
@@ -165,6 +175,24 @@ impl MessageOut {
     // Send the ticket up to the gui.
     pub async fn send_ticket(&self, ticket: String) -> Result<()> {
         self.emit(Event::SendTicket(ticket)).await?;
+        Ok(())
+    }
+
+    // Send the config up to the gui.
+    pub async fn send_config(&self, config: Config) -> Result<()> {
+        self.emit(Event::SendConfig(config)).await?;
+        Ok(())
+    }
+
+    // Send note list up to the gui
+    pub async fn send_note_list(&self, note_list: Vec<String>) -> Result<()> {
+        self.emit(Event::NoteList(note_list)).await?;
+        Ok(())
+    }
+
+    // Send note up to the gui
+    pub async fn send_note(&self, note: Note) -> Result<()> {
+        self.emit(Event::SendNote(note)).await?;
         Ok(())
     }
 }

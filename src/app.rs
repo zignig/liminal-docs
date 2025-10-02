@@ -1,11 +1,13 @@
 // The application egui front end
 
 use core::f32;
+use std::collections::BTreeMap;
 use std::fmt::Display;
 use std::path::PathBuf;
 
 use crate::about::ABOUT;
 use crate::comms::{Command, Config, Event, MessageDisplay, MessageType, ProgressList};
+use crate::notes::Note;
 use crate::worker::{Worker, WorkerHandle};
 use anyhow::Result;
 use directories::{BaseDirs, UserDirs};
@@ -15,7 +17,7 @@ use egui::Ui;
 use iroh::SecretKey;
 use rfd;
 
-use tracing::info;
+use tracing::{info, warn};
 
 const APP_NAME: &str = "liminal-docs";
 
@@ -30,13 +32,14 @@ impl Default for Config {
             None => std::process::exit(1),
         };
         let secret_key = SecretKey::generate(rand::rngs::OsRng);
-        let secret_key  = data_encoding::HEXLOWER.encode(&secret_key.to_bytes());
+        let secret_key = data_encoding::HEXLOWER.encode(&secret_key.to_bytes());
         Self {
             dark_mode: true,
             download_path,
             store_path,
             secret_key,
-            doc_key: None
+            doc_key: None,
+            author: None,
         }
     }
 }
@@ -58,6 +61,7 @@ enum AppMode {
     Send,
     SendProgress,
     FetchProgess,
+    GetDocTicket,
     Finished,
     Config,
     About,
@@ -74,6 +78,7 @@ impl Display for AppMode {
             AppMode::Finished => "Finished",
             AppMode::Config => "Config",
             AppMode::About => "About...",
+            AppMode::GetDocTicket => "Get Doc Ticket...",
         };
         write!(f, "{}", val)
     }
@@ -81,10 +86,12 @@ impl Display for AppMode {
 
 // Internal state for the application
 struct AppState {
+    notes: NotesUi,
     picked_path: Option<PathBuf>,
     worker: WorkerHandle,
     mode: AppMode,
     receiver_ticket: String,
+    current_text: String,
     send_ticket: Option<String>,
     progress: ProgressList,
     messages: Vec<MessageDisplay>,
@@ -98,7 +105,7 @@ impl eframe::App for App {
     fn update(&mut self, ctx: &eframe::egui::Context, _frame: &mut eframe::Frame) {
         if self.is_first_update {
             self.is_first_update = false;
-            ctx.set_zoom_factor(1.5);
+            ctx.set_zoom_factor(1.);
             if self.state.config.dark_mode {
                 ctx.set_visuals(Visuals::dark());
             } else {
@@ -120,17 +127,19 @@ impl App {
     pub fn run(options: NativeOptions) -> Result<(), eframe::Error> {
         // Load the config
         let config: Config = confy::load(APP_NAME, None).unwrap_or_default();
-        let _ = confy::store(APP_NAME, None, &config);
+        // let _ = confy::store(APP_NAME, None, &config);
 
         // Start up the worker , separate thread , async runner
         let handle = Worker::spawn(config.clone());
 
         // Create a fresh application
         let state = AppState {
+            notes: NotesUi::new(),
             picked_path: None,
             worker: handle,
             mode: AppMode::Init,
             receiver_ticket: String::new(),
+            current_text: String::new(),
             send_ticket: None,
             progress: ProgressList::new(),
             messages: Vec::new(),
@@ -178,6 +187,17 @@ impl AppState {
                     self.elapsed = None;
                 }
                 Event::SendTicket(ticket) => self.send_ticket = Some(ticket),
+                Event::SendConfig(config) => {
+                    self.config = config;
+                    let _ = confy::store(APP_NAME, None, &self.config);
+                }
+                Event::NoteList(list) => {
+                    self.notes.update(list);
+                }
+                Event::SendNote(note) => {
+                    self.notes.set(note.clone());
+                    self.current_text = note.text;
+                }
             }
         }
 
@@ -187,7 +207,13 @@ impl AppState {
         // Use the mode to enable and disable
         match self.mode {
             AppMode::Init => {
-                self.mode = AppMode::Idle;
+                if let Some(doc_id) = &self.config.doc_key {
+                    self.cmd(Command::DocId(doc_id.clone()));
+                    self.cmd(Command::GetNotes);
+                    self.mode = AppMode::Idle;
+                } else { 
+                    self.mode = AppMode::GetDocTicket;
+                }
             }
             AppMode::SendProgress | AppMode::FetchProgess => {
                 send_enabled = false;
@@ -232,12 +258,9 @@ impl AppState {
             .default_width(160.0)
             .min_width(160.0)
             .show(ctx, |ui| {
-                ui.add_space(10.);
-                ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
-                    if ui.toggle_value(&mut self.active, "Document").clicked() {}
-                    if ui.toggle_value(&mut self.active, "Other").clicked() {}
-                    ui.toggle_value(&mut self.active,"color");
-                });
+                if let Some(name) = self.notes.show(ui) {
+                    self.cmd(Command::GetNote(name));
+                }
             });
     }
 
@@ -277,17 +300,8 @@ impl AppState {
         ui.horizontal(|ui| {
             ui.add_space(2.);
             ui.add_enabled_ui(send_enabled, |ui| {
-                if ui.button("Send Folder…").clicked() {
-                    if let Some(path) = rfd::FileDialog::new().pick_folder() {
-                        self.picked_path = Some(path);
-                        self.mode = AppMode::Send;
-                    }
-                };
-                if ui.button("Send File…").clicked() {
-                    if let Some(path) = rfd::FileDialog::new().pick_file() {
-                        self.picked_path = Some(path);
-                        self.mode = AppMode::Send;
-                    }
+                if ui.button("List Notes").clicked() {
+                    self.cmd(Command::GetNotes);
                 };
                 ui.add_space(20.);
                 if ui.button("About").clicked() {
@@ -307,7 +321,9 @@ impl AppState {
         match self.mode {
             AppMode::Init => {}
             AppMode::Idle => {
-                self.fetch_box(ui);
+                let _current_doc = egui::TextEdit::multiline(&mut self.current_text)
+                    .desired_width(f32::INFINITY)
+                    .show(ui);
             }
             AppMode::Send => {
                 if let Some(path) = &self.picked_path {
@@ -338,6 +354,9 @@ impl AppState {
                 self.show_config(ui);
             }
             AppMode::About => self.about(ui),
+            AppMode::GetDocTicket => {
+                self.ticket_box(ui);
+            }
         }
     }
 
@@ -411,7 +430,7 @@ impl AppState {
     }
 
     // Show the blob ticket fetch box
-    fn fetch_box(&mut self, ui: &mut Ui) {
+    fn ticket_box(&mut self, ui: &mut Ui) {
         ui.label("Fetch blob with ticket...");
         ui.add_space(8.);
         let _ticket_edit = egui::TextEdit::multiline(&mut self.receiver_ticket)
@@ -419,21 +438,10 @@ impl AppState {
             .show(ui);
         ui.add_space(5.);
         ui.horizontal(|ui| {
-            if ui.button("Fetch").clicked() {
+            if ui.button("Get Doc").clicked() {
                 // Fetch to the default path
-                self.cmd(Command::Fetch((
-                    self.receiver_ticket.clone(),
-                    self.config.download_path.clone(),
-                )));
-                self.mode = AppMode::FetchProgess;
-            };
-            if ui.button("Fetch Into...").clicked() {
-                // Fetch to a custom path
-                if let Some(path) = rfd::FileDialog::new().pick_folder() {
-                    self.picked_path = Some(path.clone());
-                    self.cmd(Command::Fetch((self.receiver_ticket.clone(), path.clone())));
-                    self.mode = AppMode::FetchProgess;
-                }
+                self.cmd(Command::DocTicket(self.receiver_ticket.clone()));
+                self.mode = AppMode::Idle;
             };
         });
     }
@@ -490,4 +498,56 @@ fn format_seconds_as_hms(total_seconds: u64) -> String {
     let minutes = (total_seconds % 3600) / 60;
     let seconds = total_seconds % 60;
     format!("[{:02}:{:02}:{:02}]", hours, minutes, seconds)
+}
+
+// ------
+// Note User Interface side
+// ------
+pub struct NotesUi {
+    notes: BTreeMap<String, (bool, Option<Note>)>,
+}
+
+impl NotesUi {
+    pub fn new() -> Self {
+        Self {
+            notes: BTreeMap::new(),
+        }
+    }
+}
+
+impl NotesUi {
+    fn update(&mut self, names: Vec<String>) {
+        for note in names {
+            info!("note {}", note);
+            self.notes.insert(note, (false, None));
+        }
+    }
+
+    fn set(&mut self, note: Note) {
+        self.notes.insert(note.id.clone(), (true, Some(note)));
+    }
+
+    fn show(&mut self, ui: &mut Ui) -> Option<String> {
+        ui.add_space(10.);
+        let mut val = None;
+        ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
+            let mut active_pos = usize::MAX;
+
+            for (pos, (name, (active, _note))) in self.notes.iter_mut().enumerate() {
+                if ui.toggle_value(active, name).clicked() {
+                    active_pos = pos;
+                    val = Some(name.clone());
+                }
+            }
+            // Make sure only one is active
+            if active_pos != usize::MAX {
+                for (pos, (name, (active, _note))) in self.notes.iter_mut().enumerate() {
+                    if active_pos != pos {
+                        *active = false;
+                    }
+                }
+            }
+        });
+        return val;
+    }
 }

@@ -7,6 +7,7 @@ mod app;
 mod comms;
 mod worker;
 mod about;
+mod notes; 
 
 use app::App;
 use eframe::NativeOptions;
@@ -18,7 +19,7 @@ fn main() -> eframe::Result {
         .viewport
         .with_title("Liminal Docs")
         .with_resizable(true)
-        .with_inner_size([320., 400.])
+        .with_inner_size([640., 480.])
         .with_drag_and_drop(true); // So cool !!
     App::run(options)
 }

@@ -5,11 +5,14 @@
 use std::{path::PathBuf, str::FromStr, sync::Arc, time::Duration};
 
 use crate::comms::{Command, Config, Event, MessageOut};
+use crate::notes::Notes;
 use anyhow::Result;
 use async_channel::{Receiver, Sender};
 use iroh::{Endpoint, SecretKey};
-use iroh_blobs::store::fs::FsStore;
-use iroh_docs::{protocol::Docs, store};
+use iroh_blobs::{BlobsProtocol, store::fs::FsStore};
+use iroh_docs::{AuthorId, NamespaceId};
+use iroh_docs::{DocTicket, engine::LiveEvent, protocol::Docs, store};
+use iroh_gossip::net::Gossip;
 use n0_future::StreamExt;
 use tokio::{
     sync::Notify,
@@ -21,8 +24,12 @@ pub struct Worker {
     pub command_rx: Receiver<Command>,
     pub mess: MessageOut,
     pub timer_out: Sender<TimerCommands>,
-    pub store: FsStore,
+    pub blobs: BlobsProtocol,
     pub send_notify: Arc<Notify>,
+    pub endpoint: Endpoint,
+    pub notes: Option<Notes>,
+    pub gossip: Gossip,
+    pub docs: Docs,
     pub config: Config,
 }
 
@@ -77,25 +84,45 @@ impl Worker {
         let secret_key = SecretKey::from_str(config.secret_key.as_str())?;
         let endpoint = Endpoint::builder()
             .secret_key(secret_key)
-            .discovery_n0();
+            .discovery_n0()
+            .bind()
+            .await?;
+
         // Create the blob store
         let mut blob_path = config.store_path.clone();
         blob_path.push("blobs");
-        let store = iroh_blobs::store::fs::FsStore::load(&blob_path).await?;
+        let store = iroh_blobs::store::fs::FsStore::load(&blob_path)
+            .await
+            .unwrap();
+        let blobs = iroh_blobs::BlobsProtocol::new(&store, endpoint.clone(), None);
+
+        // Create the gossip
+        let gossip = Gossip::builder().spawn(endpoint.clone());
 
         // Create the doc store
-        let mut docs_path = config.store_path.clone();
-        docs_path.push("docs");
-        // let docs = Docs::persistent(docs_path);
+        let docs_path = config.store_path.clone();
+        let docs = Docs::persistent(docs_path)
+            .spawn(endpoint.clone(), (*blobs).clone(), gossip.clone())
+            .await?;
+
+
+        // the notify
+        let send_notify = Arc::new(Notify::new());
+        // The unbuilt notes
+        let notes = None;
 
         // Make the worker
         Ok(Self {
             command_rx,
             mess,
-            timer_out: timer_out,
-            store,
-            send_notify: Arc::new(Notify::new()),
+            timer_out,
+            blobs,
+            send_notify,
+            endpoint,
+            gossip,
+            docs,
             config,
+            notes,
         })
     }
 
@@ -127,12 +154,50 @@ impl Worker {
                 let _ = self.mess.set_callback(callback).await?;
                 // Say ready
                 self.mess.good("Ready...").await?;
-                // Show exisiting tags for later work ( replication worker , not yet)
-                let mut tags = self.store.tags().list().await.unwrap();
-                while let Some(event) = tags.next().await {
+                return Ok(());
+            }
+            Command::DocTicket(ticket) => {
+                // schnaffle the ticket into the config
+                let doc_ticket = DocTicket::from_str(ticket.as_str())?;
+                info!("{:#?}",&doc_ticket);
+                self.config.doc_key = Some(doc_ticket.capability.id().to_string());
+
+                // Create a new author if none ( not using default )
+                let author_id = match &self.config.author {
+                    Some(author) => AuthorId::from_str(&author)?,
+                    None => {
+                        let author = self.docs.author_create().await?;
+                        self.config.author = Some(format!("{}", author));
+                        author
+                    }
+                };
+
+               
+                warn!("Create the notes object");
+                // Grab the docs
+                let notes = Notes::new(
+                    Some(ticket),
+                    author_id,
+                    self.blobs.clone(),
+                    self.docs.clone(),
+                )
+                .await?;
+                warn!("Start Sync");
+                // Subscribe and get synced
+                let mut stat = notes.doc_subscribe().await?;
+                while let Some(event) = stat.next().await {
                     let event = event?;
-                    info!("{} {}", event.name, event.hash);
+                    match event {
+                        LiveEvent::SyncFinished(_) => break,
+                        _ => {}
+                    }
                 }
+                self.notes = Some(notes);
+                // move the config up to the gui and save.
+                warn!("Save the config");
+                self.mess.send_config(self.config.clone()).await?;
+                println!("{:#?}", &self.config);
+                info!("exit new ticket");
                 return Ok(());
             }
             Command::Send(path) => {
@@ -156,9 +221,56 @@ impl Worker {
                 self.config = config;
                 return Ok(());
             }
+            Command::GetNotes => {
+                if let Some(notes) = &self.notes {
+                    let note_list = notes.get_note_vec().await;
+                    self.mess.send_note_list(note_list).await?;
+                }
+                return Ok(());
+            }
+            Command::DocId(id) => {
+                info!("Create doc from id {}", id);
+                let id = NamespaceId::from_str(id.as_str())?;
+                let author_id = match &self.config.author {
+                    Some(author) => AuthorId::from_str(&author)?,
+                    None => {
+                        let author = self.docs.author_create().await?;
+                        self.config.author = Some(format!("{}", author));
+                        author
+                    }
+                };
+                let notes =
+                    Notes::from_id(id, author_id, self.blobs.clone(), self.docs.clone()).await?;
+                // needs another thread
+
+                // Subscribe and get synced
+                warn!("Start sync");
+                let mut stat = notes.doc_subscribe().await?;
+                while let Some(event) = stat.next().await {
+                    let event = event?;
+                    warn!("{:#?}",event);
+                    match event {
+                        LiveEvent::SyncFinished(_) => break,
+                        _ => {}
+                    }
+                }
+                warn!("Finish sync");
+                self.notes = Some(notes);
+
+                return Ok(());
+            }
+            Command::GetNote(id) => {
+                if let Some(notes) = &self.notes {
+                    let note = notes.get_note(id).await?;
+                    println!("{:#?}", note);
+                    self.mess.send_note(note).await?;
+                }
+                return Ok(());
+            }
         }
     }
 
+    //
     // -----
     // Timer functions
     //------
@@ -207,7 +319,7 @@ impl TimerTask {
                 tokio::select! {
                     command  = incoming.recv() => {
                        let command = command.unwrap() ;
-                        //    info!("timer -- {:?}",command);
+                           info!("timer -- {:?}",command);
                        match command {
                         TimerCommands::Start => { start_time = Instant::now(); running = true;},
                         TimerCommands::Reset => { running = false ; let _ = mess.reset_timer().await; } ,
