@@ -104,8 +104,6 @@ impl Worker {
         let docs = Docs::persistent(docs_path)
             .spawn(endpoint.clone(), (*blobs).clone(), gossip.clone())
             .await?;
-
-
         // the notify
         let send_notify = Arc::new(Notify::new());
         // The unbuilt notes
@@ -159,7 +157,7 @@ impl Worker {
             Command::DocTicket(ticket) => {
                 // schnaffle the ticket into the config
                 let doc_ticket = DocTicket::from_str(ticket.as_str())?;
-                info!("{:#?}",&doc_ticket);
+                info!("{:#?}", &doc_ticket);
                 self.config.doc_key = Some(doc_ticket.capability.id().to_string());
 
                 // Create a new author if none ( not using default )
@@ -172,7 +170,6 @@ impl Worker {
                     }
                 };
 
-               
                 warn!("Create the notes object");
                 // Grab the docs
                 let notes = Notes::new(
@@ -198,12 +195,6 @@ impl Worker {
                 self.mess.send_config(self.config.clone()).await?;
                 println!("{:#?}", &self.config);
                 info!("exit new ticket");
-                return Ok(());
-            }
-            Command::Send(path) => {
-                return Ok(());
-            }
-            Command::Fetch((ticket, target)) => {
                 return Ok(());
             }
             Command::CancelSend => {
@@ -248,7 +239,7 @@ impl Worker {
                 let mut stat = notes.doc_subscribe().await?;
                 while let Some(event) = stat.next().await {
                     let event = event?;
-                    warn!("{:#?}",event);
+                    warn!("{:#?}", event);
                     match event {
                         LiveEvent::SyncFinished(_) => break,
                         _ => {}
@@ -256,14 +247,19 @@ impl Worker {
                 }
                 warn!("Finish sync");
                 self.notes = Some(notes);
-
                 return Ok(());
             }
             Command::GetNote(id) => {
                 if let Some(notes) = &self.notes {
                     let note = notes.get_note(id).await?;
-                    println!("{:#?}", note);
                     self.mess.send_note(note).await?;
+                }
+                return Ok(());
+            }
+            Command::GetShareTicket => {
+                if let Some(notes) = &self.notes {
+                    let share_ticket = notes.ticket();
+                    self.mess.share_ticket(share_ticket).await?;
                 }
                 return Ok(());
             }

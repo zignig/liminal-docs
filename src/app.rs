@@ -58,10 +58,8 @@ pub struct App {
 enum AppMode {
     Init,
     Idle,
-    Send,
-    SendProgress,
-    FetchProgess,
     GetDocTicket,
+    ShareTicket,
     Finished,
     Config,
     About,
@@ -72,13 +70,11 @@ impl Display for AppMode {
         let val = match self {
             AppMode::Init => "Init",
             AppMode::Idle => "Idle",
-            AppMode::Send => "Send",
-            AppMode::SendProgress => "Send Running...",
-            AppMode::FetchProgess => "Fetch Running...",
             AppMode::Finished => "Finished",
             AppMode::Config => "Config",
             AppMode::About => "About...",
             AppMode::GetDocTicket => "Get Doc Ticket...",
+            AppMode::ShareTicket => "Share Ticket...",
         };
         write!(f, "{}", val)
     }
@@ -87,17 +83,16 @@ impl Display for AppMode {
 // Internal state for the application
 struct AppState {
     notes: NotesUi,
-    picked_path: Option<PathBuf>,
     worker: WorkerHandle,
     mode: AppMode,
     receiver_ticket: String,
     current_text: String,
-    send_ticket: Option<String>,
     progress: ProgressList,
     messages: Vec<MessageDisplay>,
     config: Config,
     elapsed: Option<u64>,
     active: bool,
+    share_ticket: Option<String>,
 }
 
 // Make the egui impl for display
@@ -135,17 +130,16 @@ impl App {
         // Create a fresh application
         let state = AppState {
             notes: NotesUi::new(),
-            picked_path: None,
             worker: handle,
             mode: AppMode::Init,
             receiver_ticket: String::new(),
             current_text: String::new(),
-            send_ticket: None,
             progress: ProgressList::new(),
             messages: Vec::new(),
             config: config,
             elapsed: None,
             active: false,
+            share_ticket: None,
         };
 
         // New App
@@ -186,7 +180,6 @@ impl AppState {
                 Event::StopTick => {
                     self.elapsed = None;
                 }
-                Event::SendTicket(ticket) => self.send_ticket = Some(ticket),
                 Event::SendConfig(config) => {
                     self.config = config;
                     let _ = confy::store(APP_NAME, None, &self.config);
@@ -197,6 +190,9 @@ impl AppState {
                 Event::SendNote(note) => {
                     self.notes.set(note.clone());
                     self.current_text = note.text;
+                }
+                Event::SendShareTicket(share_ticket) => {
+                    self.share_ticket = Some(share_ticket);
                 }
             }
         }
@@ -211,12 +207,9 @@ impl AppState {
                     self.cmd(Command::DocId(doc_id.clone()));
                     self.cmd(Command::GetNotes);
                     self.mode = AppMode::Idle;
-                } else { 
+                } else {
                     self.mode = AppMode::GetDocTicket;
                 }
-            }
-            AppMode::SendProgress | AppMode::FetchProgess => {
-                send_enabled = false;
             }
             AppMode::Finished => {
                 self.cmd(Command::ResetTimer);
@@ -247,8 +240,6 @@ impl AppState {
             self.show_progress(ui);
             // Show the current messages
             self.show_messages(ui);
-            // Lower modal display
-            self.modal_display_below(ui);
         });
     }
 
@@ -272,11 +263,6 @@ impl AppState {
             ui.add_space(5.);
             ui.horizontal(|ui| {
                 if ui.button("Clear").clicked() {
-                    // Clear and reset the interface
-                    // if we are in send mode drop the connection
-                    if self.mode == AppMode::SendProgress {
-                        self.cmd(Command::CancelSend);
-                    }
                     // Reset the timer for good measure
                     self.cmd(Command::ResetTimer);
                     self.reset();
@@ -303,6 +289,10 @@ impl AppState {
                 if ui.button("List Notes").clicked() {
                     self.cmd(Command::GetNotes);
                 };
+                if ui.button("Share...").clicked() {
+                    self.cmd(Command::GetShareTicket);
+                    self.mode = AppMode::ShareTicket;
+                }
                 ui.add_space(20.);
                 if ui.button("About").clicked() {
                     self.mode = AppMode::About;
@@ -325,30 +315,6 @@ impl AppState {
                     .desired_width(f32::INFINITY)
                     .show(ui);
             }
-            AppMode::Send => {
-                if let Some(path) = &self.picked_path {
-                    self.cmd(Command::Send(path.to_owned()));
-                    self.mode = AppMode::SendProgress;
-                }
-            }
-            AppMode::SendProgress => {
-                if let Some(path) = &self.picked_path {
-                    ui.label(format!("{}", path.display()));
-                }
-                if let Some(ticket) = &self.send_ticket {
-                    ui.add_space(10.);
-                    ui.label("Blob Ticket...");
-                    ui.add_space(5.);
-                    ui.separator();
-                    ui.add_space(10.);
-                    ui.label(RichText::new(ticket).strong().font(FontId::monospace(15.)));
-                    ui.add_space(10.);
-                    ui.separator();
-                }
-            }
-            AppMode::FetchProgess => {
-                ui.label("Fetching ...");
-            }
             AppMode::Finished => {}
             AppMode::Config => {
                 self.show_config(ui);
@@ -357,24 +323,18 @@ impl AppState {
             AppMode::GetDocTicket => {
                 self.ticket_box(ui);
             }
-        }
-    }
-
-    // Modal display below progress and messages
-    fn modal_display_below(&mut self, ui: &mut Ui) {
-        match self.mode {
-            AppMode::SendProgress => {
-                ui.add_space(10.);
-                ui.separator();
-                if ui.button("Finish").clicked() {
-                    // This activates a notify within the send system
-                    // to finish the send endpoint
-                    self.cmd(Command::CancelSend);
-                    self.send_ticket = None;
-                    self.mode = AppMode::Finished;
+            AppMode::ShareTicket => {
+                if let Some(ticket) = &self.share_ticket {
+                    ui.add_space(10.);
+                    ui.label("Doc Share Ticket...");
+                    ui.add_space(5.);
+                    ui.separator();
+                    ui.add_space(10.);
+                    ui.label(RichText::new(ticket).strong().font(FontId::monospace(15.)));
+                    ui.add_space(10.);
+                    ui.separator();
                 }
             }
-            _ => {}
         }
     }
 
@@ -421,7 +381,7 @@ impl AppState {
     fn about(&mut self, ui: &mut Ui) {
         ui.label(ABOUT);
         ui.add_space(10.);
-        let _ = ui.hyperlink("https://github.com/zignig/sendme-egui");
+        let _ = ui.hyperlink("https://github.com/zignig/liminal-docs");
         ui.add_space(10.);
         ui.separator();
         if ui.button("Awesome!").clicked() {
@@ -431,7 +391,7 @@ impl AppState {
 
     // Show the blob ticket fetch box
     fn ticket_box(&mut self, ui: &mut Ui) {
-        ui.label("Fetch blob with ticket...");
+        ui.label("Docs share ticket");
         ui.add_space(8.);
         let _ticket_edit = egui::TextEdit::multiline(&mut self.receiver_ticket)
             .desired_width(f32::INFINITY)
@@ -452,7 +412,6 @@ impl AppState {
         self.receiver_ticket = "".to_string();
         self.messages = Vec::new();
         self.progress.clear();
-        self.send_ticket = None;
     }
 
     // Show the list of progress bars
@@ -518,7 +477,6 @@ impl NotesUi {
 impl NotesUi {
     fn update(&mut self, names: Vec<String>) {
         for note in names {
-            info!("note {}", note);
             self.notes.insert(note, (false, None));
         }
     }

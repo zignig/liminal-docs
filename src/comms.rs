@@ -35,8 +35,8 @@ pub enum Event {
     Progress((String, usize, usize)),
     ProgressFinished(String),
     ProgressComplete(String),
-    SendTicket(String),
     SendConfig(Config),
+    SendShareTicket(String),
     NoteList(Vec<String>),
     SendNote(Note),
     Tick(u64),
@@ -49,10 +49,9 @@ pub enum Command {
     Setup { callback: UpdateCallback },
     DocTicket(String),
     DocId(String),
+    GetShareTicket,
     GetNotes,
     GetNote(String),
-    Send(PathBuf),
-    Fetch((String, PathBuf)),
     SendConfig(Config),
     ResetTimer,
     CancelSend,
@@ -172,12 +171,6 @@ impl MessageOut {
         Ok(())
     }
 
-    // Send the ticket up to the gui.
-    pub async fn send_ticket(&self, ticket: String) -> Result<()> {
-        self.emit(Event::SendTicket(ticket)).await?;
-        Ok(())
-    }
-
     // Send the config up to the gui.
     pub async fn send_config(&self, config: Config) -> Result<()> {
         self.emit(Event::SendConfig(config)).await?;
@@ -193,6 +186,12 @@ impl MessageOut {
     // Send note up to the gui
     pub async fn send_note(&self, note: Note) -> Result<()> {
         self.emit(Event::SendNote(note)).await?;
+        Ok(())
+    }
+
+    // Send the share ticket up to the gui
+    pub async fn share_ticket(&self, share_ticket: String) -> Result<()> {
+        self.emit(Event::SendShareTicket(share_ticket)).await?;
         Ok(())
     }
 }
