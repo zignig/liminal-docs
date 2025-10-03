@@ -188,7 +188,7 @@ impl Notes {
     pub async fn get_note_vec(&self) -> Vec<String> {
         let note_list_res = self.get_notes().await;
         let items = match note_list_res {
-            Ok(notes) => notes.iter().map(|n| n.id.clone()).collect(),
+            Ok(notes) => notes.iter().filter(|note| !note.is_delete ).map(|n| n.id.clone()).collect(),
             Err(e) => vec![format!("{e}")],
         };
         items
