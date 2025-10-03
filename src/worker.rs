@@ -8,12 +8,15 @@ use crate::comms::{Command, Config, Event, MessageOut};
 use crate::notes::Notes;
 use anyhow::Result;
 use async_channel::{Receiver, Sender};
+use iroh::protocol::Router;
 use iroh::{Endpoint, SecretKey};
 use iroh_blobs::{BlobsProtocol, store::fs::FsStore};
+use iroh_docs::engine::Engine;
 use iroh_docs::{AuthorId, NamespaceId};
 use iroh_docs::{DocTicket, engine::LiveEvent, protocol::Docs, store};
 use iroh_gossip::net::Gossip;
 use n0_future::StreamExt;
+use n0_watcher::Watcher;
 use tokio::{
     sync::Notify,
     time::{Instant, interval},
@@ -31,6 +34,7 @@ pub struct Worker {
     pub gossip: Gossip,
     pub docs: Docs,
     pub config: Config,
+    pub router: Router,
 }
 
 pub struct WorkerHandle {
@@ -100,6 +104,7 @@ impl Worker {
         let gossip = Gossip::builder().spawn(endpoint.clone());
 
         // Create the doc store
+
         let docs_path = config.store_path.clone();
         let docs = Docs::persistent(docs_path)
             .spawn(endpoint.clone(), (*blobs).clone(), gossip.clone())
@@ -108,6 +113,16 @@ impl Worker {
         let send_notify = Arc::new(Notify::new());
         // The unbuilt notes
         let notes = None;
+
+        // make the router
+        let router = iroh::protocol::Router::builder(endpoint.clone())
+            .accept(iroh_gossip::ALPN, gossip.clone())
+            .accept(iroh_blobs::ALPN, blobs.clone())
+            .accept(iroh_docs::ALPN, docs.clone())
+            .spawn();
+
+        let addr = router.endpoint().node_addr().initialized().await;
+        warn!("{:#?}", addr);
 
         // Make the worker
         Ok(Self {
@@ -121,6 +136,7 @@ impl Worker {
             docs,
             config,
             notes,
+            router,
         })
     }
 

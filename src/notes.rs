@@ -21,7 +21,14 @@ use bytes::Bytes;
 use chrono::{Local, Utc};
 use iroh_blobs::{BlobsProtocol, format::collection::Collection};
 use iroh_docs::{
-    AuthorId, DocTicket, Entry, NamespaceId, api::{Doc, protocol::{AddrInfoOptions, ShareMode}}, engine::LiveEvent, protocol::Docs, store::Query
+    AuthorId, DocTicket, Entry, NamespaceId,
+    api::{
+        Doc,
+        protocol::{AddrInfoOptions, ShareMode},
+    },
+    engine::LiveEvent,
+    protocol::Docs,
+    store::Query,
 };
 
 // use n0_watcher::Watcher;
@@ -106,7 +113,9 @@ impl Notes {
             }
             None => docs.create().await?,
         };
-        let ticket = doc.share(ShareMode::Write, AddrInfoOptions::RelayAndAddresses).await?;
+        let ticket = doc
+            .share(ShareMode::Write, AddrInfoOptions::RelayAndAddresses)
+            .await?;
 
         Ok(Self(Arc::new(Inner {
             blobs,
@@ -128,7 +137,9 @@ impl Notes {
             Some(doc) => doc,
             None => return Err(anyhow!("Doc does not exist")),
         };
-        let ticket = doc.share(ShareMode::Write, AddrInfoOptions::RelayAndAddresses).await?;
+        let ticket = doc
+            .share(ShareMode::Write, AddrInfoOptions::RelayAndAddresses)
+            .await?;
         let author = author;
         Ok(Self(Arc::new(Inner {
             blobs,
@@ -188,7 +199,7 @@ impl Notes {
     pub async fn get_note_vec(&self) -> Vec<String> {
         let note_list_res = self.get_notes().await;
         let items = match note_list_res {
-            Ok(notes) => notes.iter().filter(|note| !note.is_delete ).map(|n| n.id.clone()).collect(),
+            Ok(notes) => notes.iter().map(|n| n.id.clone()).collect(),
             Err(e) => vec![format!("{e}")],
         };
         items
@@ -277,7 +288,7 @@ impl Notes {
         }
     }
 
-    // Save out the docs as date stamped .md files 
+    // Save out the docs as date stamped .md files
     pub async fn bounce_down(&self) -> Result<()> {
         let entries = self.0.doc.get_many(Query::single_latest_per_key()).await?;
         let mut notes = Vec::new();

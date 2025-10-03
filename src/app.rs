@@ -333,6 +333,9 @@ impl AppState {
                     ui.label(RichText::new(ticket).strong().font(FontId::monospace(15.)));
                     ui.add_space(10.);
                     ui.separator();
+                    if ui.button("Ok ...").clicked() { 
+                        self.mode = AppMode::Idle;
+                    }
                 }
             }
         }
