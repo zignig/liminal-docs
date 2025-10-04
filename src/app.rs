@@ -9,16 +9,15 @@ use crate::about::ABOUT;
 use crate::comms::{Command, Config, Event, MessageDisplay, MessageType, ProgressList};
 use crate::notes::Note;
 use crate::worker::{Worker, WorkerHandle};
-use crate::markdown;
 
 use anyhow::Result;
 use directories::{BaseDirs, UserDirs};
 use eframe::NativeOptions;
 use eframe::egui::{self, FontId, RichText, Visuals};
 use egui::Ui;
+use egui_commonmark::{CommonMarkCache, CommonMarkViewer};
 use iroh::SecretKey;
 use rfd::FileDialog;
-
 
 use tracing::{info, warn};
 
@@ -91,12 +90,13 @@ struct AppState {
     worker: WorkerHandle,
     mode: AppMode,
     receiver_ticket: String,
-    current_text: String,
+    current_text: Option<String>,
     progress: ProgressList,
     messages: Vec<MessageDisplay>,
     config: Config,
     elapsed: Option<u64>,
     share_ticket: Option<String>,
+    cache: CommonMarkCache,
 }
 
 // Make the egui impl for display
@@ -137,12 +137,13 @@ impl App {
             worker: handle,
             mode: AppMode::Init,
             receiver_ticket: String::new(),
-            current_text: String::new(),
+            current_text: None,
             progress: ProgressList::new(),
             messages: Vec::new(),
             config: config,
             elapsed: None,
             share_ticket: None,
+            cache: CommonMarkCache::default(),
         };
 
         // New App
@@ -192,7 +193,7 @@ impl AppState {
                 }
                 Event::SendNote(note) => {
                     self.notes.set(note.clone());
-                    self.current_text = note.text;
+                    self.current_text = Some(note.text);
                 }
                 Event::SendShareTicket(share_ticket) => {
                     self.share_ticket = Some(share_ticket);
@@ -314,12 +315,20 @@ impl AppState {
         match self.mode {
             AppMode::Init => {}
             AppMode::Idle => {
-                markdown::show(ui,&self.current_text);
+                if let Some(current_text) = &self.current_text {
+                    if ui.button("Edit...").clicked() {
+                        self.mode = AppMode::Edit;
+                    }
+                    let viewer = CommonMarkViewer::new();
+                    viewer.show_scrollable("markdown", ui, &mut self.cache, current_text.as_str());
+                };
             }
             AppMode::Edit => {
-                let _current_doc = egui::TextEdit::multiline(&mut self.current_text)
-                    .desired_width(f32::INFINITY)
-                    .show(ui);
+                if let Some(current_text) = &mut self.current_text {
+                    let _current_doc = egui::TextEdit::multiline(current_text)
+                        .desired_width(f32::INFINITY)
+                        .show(ui);
+                }
             }
             AppMode::Finished => {}
             AppMode::Config => {
@@ -339,7 +348,7 @@ impl AppState {
                     ui.label(RichText::new(ticket).strong().font(FontId::monospace(15.)));
                     ui.add_space(10.);
                     ui.separator();
-                    if ui.button("Done").clicked() { 
+                    if ui.button("Done").clicked() {
                         self.mode = AppMode::Idle;
                     }
                 }

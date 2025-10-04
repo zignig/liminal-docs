@@ -8,7 +8,6 @@ mod comms;
 mod worker;
 mod about;
 mod notes;
-mod markdown;
 
 use app::App;
 use eframe::NativeOptions;
