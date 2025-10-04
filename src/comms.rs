@@ -1,7 +1,7 @@
 // Comms between the gui and  the worker in it's own module.
 // Some of this lives on both sides ( be careful )
 
-use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
+use std::{path::PathBuf, sync::Arc};
 
 use anyhow::Result;
 use async_channel::Sender;
@@ -31,9 +31,6 @@ type UpdateCallback = Box<dyn Fn() + Send + 'static>;
 // Incoming events
 pub enum Event {
     Message(MessageDisplay),
-    Progress((String, usize, usize)),
-    ProgressFinished(String),
-    ProgressComplete(String),
     SendConfig(Config),
     SendShareTicket(String),
     NoteList(Vec<String>),
@@ -140,24 +137,6 @@ impl MessageOut {
         Ok(())
     }
 
-    pub async fn progress(&self, name: &str, current: usize, total: usize) -> Result<()> {
-        self.emit(Event::Progress((name.to_string(), current, total)))
-            .await?;
-        Ok(())
-    }
-
-    // Show the progress bar in green when complete
-    pub async fn progress_complete(&self, name: &str) -> Result<()> {
-        self.emit(Event::ProgressComplete(name.to_string())).await?;
-        Ok(())
-    }
-
-    // Finish and delete the progress bar
-    pub async fn progress_finish(&self, name: &str) -> Result<()> {
-        self.emit(Event::ProgressFinished(name.to_string())).await?;
-        Ok(())
-    }
-
     // Send a clock update , show the clock in the gui
     pub async fn tick(&self, since: u64) -> Result<()> {
         self.emit(Event::Tick(since)).await?;
@@ -216,91 +195,5 @@ impl MessageDisplay {
                 ui.label(m);
             }
         }
-    }
-}
-
-// --------
-// Progress Bars
-// --------
-
-struct ProgressBar {
-    name: String,
-    current: usize,
-    total: usize,
-    complete: bool,
-    item: Option<String>,
-}
-
-impl ProgressBar {
-    pub fn show(&self, ui: &mut Ui) {
-        ui.add_space(2.);
-        ui.small(self.name.to_string());
-        ui.add_space(2.);
-        let prog_val = if self.current == self.total {
-            1.
-        } else {
-            (self.current as f32) / (self.total as f32)
-        };
-        let mut progress_bar = egui::ProgressBar::new(prog_val)
-            .show_percentage()
-            .desired_height(15.);
-        if self.complete {
-            progress_bar = progress_bar.fill(Color32::DARK_GREEN);
-        }
-        ui.add(progress_bar);
-        if let Some(item) = &self.item {
-            ui.small(item);
-        }
-    }
-}
-
-pub struct ProgressList {
-    bars: BTreeMap<String, ProgressBar>,
-}
-
-impl ProgressList {
-    pub fn new() -> Self {
-        Self {
-            bars: BTreeMap::new(),
-        }
-    }
-
-    pub fn insert(&mut self, name: String, current: usize, total: usize) {
-        if let Some(item) = self.bars.get_mut(&name) {
-            item.name = name;
-            item.current = current;
-            item.total = total;
-        } else {
-            self.bars.insert(
-                name.to_owned(),
-                ProgressBar {
-                    name: name,
-                    current,
-                    total,
-                    complete: false,
-                    item: None,
-                },
-            );
-        }
-    }
-
-    pub fn complete(&mut self, name: String) {
-        if let Some(item) = self.bars.get_mut(&name) {
-            item.complete = true;
-        }
-    }
-
-    pub fn finish(&mut self, name: String) {
-        self.bars.remove(&name);
-    }
-
-    pub fn show(&self, ui: &mut Ui) {
-        for (_, item) in self.bars.iter() {
-            item.show(ui);
-        }
-    }
-
-    pub fn clear(&mut self) {
-        self.bars = BTreeMap::new();
     }
 }

@@ -5,14 +5,14 @@ use std::collections::BTreeMap;
 use std::fmt::Display;
 
 use crate::about::ABOUT;
-use crate::comms::{Command, Config, Event, MessageDisplay, MessageType, ProgressList};
+use crate::comms::{Command, Config, Event, MessageDisplay, MessageType};
 use crate::notes::Note;
 use crate::worker::{Worker, WorkerHandle};
 
 use anyhow::Result;
 use directories::{BaseDirs, UserDirs};
-use eframe::NativeOptions;
 use eframe::egui::{self, FontId, RichText, Visuals};
+use eframe::NativeOptions;
 use egui::Ui;
 use egui_commonmark::{CommonMarkCache, CommonMarkViewer};
 use iroh::SecretKey;
@@ -72,7 +72,7 @@ impl Display for AppMode {
         let val = match self {
             AppMode::Init => "Init",
             AppMode::Idle => "Idle",
-            AppMode::Edit => "Editint ...",
+            AppMode::Edit => "Editing ...",
             AppMode::Finished => "Finished",
             AppMode::Config => "Config",
             AppMode::About => "About...",
@@ -90,12 +90,12 @@ struct AppState {
     mode: AppMode,
     receiver_ticket: String,
     current_text: Option<String>,
-    progress: ProgressList,
     messages: Vec<MessageDisplay>,
     config: Config,
     elapsed: Option<u64>,
     share_ticket: Option<String>,
     cache: CommonMarkCache,
+    current_note: Option<Note>,
 }
 
 // Make the egui impl for display
@@ -137,12 +137,12 @@ impl App {
             mode: AppMode::Init,
             receiver_ticket: String::new(),
             current_text: None,
-            progress: ProgressList::new(),
             messages: Vec::new(),
             config: config,
             elapsed: None,
             share_ticket: None,
             cache: CommonMarkCache::default(),
+            current_note: None,
         };
 
         // New App
@@ -168,15 +168,10 @@ impl AppState {
                     }
                     self.messages.push(m);
                 }
-                Event::Progress((name, current, total)) => {
-                    self.progress.insert(name, current, total);
-                }
                 Event::Finished => {
                     self.cmd(Command::ResetTimer);
                     self.mode = AppMode::Finished;
                 }
-                Event::ProgressFinished(name) => self.progress.finish(name),
-                Event::ProgressComplete(name) => self.progress.complete(name),
                 Event::Tick(seconds) => {
                     self.elapsed = Some(seconds);
                 }
@@ -193,6 +188,7 @@ impl AppState {
                 Event::SendNote(note) => {
                     self.notes.set(note.clone());
                     self.current_text = Some(note.text);
+                    // self.current_note = Some(note.clone());
                 }
                 Event::SendShareTicket(share_ticket) => {
                     self.share_ticket = Some(share_ticket);
@@ -238,22 +234,22 @@ impl AppState {
             // gap
             ui.separator();
             // Modal Display
-            self.modal_display_above(ui);
-            // Show the current progress bars
-            self.show_progress(ui);
+            self.modal_display(ui);
             // Show the current messages
             self.show_messages(ui);
         });
     }
 
+    // Sidepanel for selecting notes
     fn side_panel(&mut self, ctx: &egui::Context) {
         egui::SidePanel::left("doc list")
             .resizable(false)
             .default_width(160.0)
             .min_width(160.0)
             .show(ctx, |ui| {
-                ui.add_space(1.);
+                ui.add_space(10.);
                 ui.strong("Notes");
+                ui.add_space(1.);
                 ui.separator();
                 ui.add_space(1.);
                 if let Some(name) = self.notes.show(ui) {
@@ -262,6 +258,7 @@ impl AppState {
             });
     }
 
+    // Status bar footer
     fn footer(&mut self, ctx: &egui::Context) {
         // Status bar at the bottom
         // egui needs outer things done first
@@ -313,24 +310,40 @@ impl AppState {
     }
 
     // modal display above progress and messages
-    fn modal_display_above(&mut self, ui: &mut Ui) {
+    fn modal_display(&mut self, ui: &mut Ui) {
         // Show mode based widgets
         match self.mode {
             AppMode::Init => {}
             AppMode::Idle => {
                 if let Some(current_text) = &self.current_text {
-                    if ui.button("Edit...").clicked() {
-                        self.mode = AppMode::Edit;
-                    }
                     let viewer = CommonMarkViewer::new();
-                    viewer.show_scrollable("markdown", ui, &mut self.cache, current_text.as_str());
+                    ui.vertical(|ui| {
+                        if ui.button("Edit").clicked() {
+                            self.mode = AppMode::Edit;
+                        };
+                        ui.separator();
+                        viewer.show_scrollable(
+                            "markdown",
+                            ui,
+                            &mut self.cache,
+                            current_text.as_str(),
+                        );
+                    });
                 };
             }
             AppMode::Edit => {
                 if let Some(current_text) = &mut self.current_text {
-                    let _current_doc = egui::TextEdit::multiline(current_text)
-                        .desired_width(f32::INFINITY)
-                        .show(ui);
+                    ui.vertical(|ui| {
+                        ui.horizontal(|ui| {
+                            if ui.button("Save").clicked() {};
+                            if ui.button("Cancel").clicked() {}
+                        });
+                        ui.separator();
+                        let _current_doc = egui::TextEdit::multiline(current_text)
+                            .desired_width(f32::INFINITY)
+                            .show(ui);
+                        ui.separator();
+                    });
                 }
             }
             AppMode::Finished => {}
@@ -432,13 +445,8 @@ impl AppState {
         self.mode = AppMode::Idle;
         self.receiver_ticket = "".to_string();
         self.messages = Vec::new();
-        self.progress.clear();
-    }
-
-    // Show the list of progress bars
-    fn show_progress(&mut self, ui: &mut Ui) {
-        ui.add_space(4.);
-        self.progress.show(ui);
+        self.current_text = None;
+        self.notes.clear_selection();
     }
 
     // Show the list of messages
@@ -506,6 +514,12 @@ impl NotesUi {
     // TODO name is wrong
     fn set(&mut self, note: Note) {
         self.notes.insert(note.id.clone(), (true, Some(note)));
+    }
+
+    fn clear_selection(&mut self) {
+        for (_, (active, _)) in self.notes.iter_mut() {
+            *active = false;
+        }
     }
 
     fn show(&mut self, ui: &mut Ui) -> Option<String> {

@@ -4,6 +4,7 @@
 
 use std::{str::FromStr, sync::Arc, time::Duration};
 
+use crate::app::NotesUi;
 use crate::comms::{Command, Config, Event, MessageOut};
 use crate::notes::Notes;
 use anyhow::Result;
@@ -28,12 +29,12 @@ pub struct Worker {
     pub timer_out: Sender<TimerCommands>,
     pub blobs: BlobsProtocol,
     pub send_notify: Arc<Notify>,
-    pub endpoint: Endpoint,
+    //pub endpoint: Endpoint,
     pub notes: Option<Notes>,
-    pub gossip: Gossip,
+    //pub gossip: Gossip,
     pub docs: Docs,
     pub config: Config,
-    pub router: Router,
+    //pub router: Router,
     pub tasks: FuturesUnordered<n0_future::boxed::BoxFuture<()>>,
 }
 
@@ -134,12 +135,12 @@ impl Worker {
             timer_out,
             blobs,
             send_notify,
-            endpoint,
-            gossip,
+            //endpoint,
+            //gossip,
             docs,
             config,
             notes,
-            router,
+            //router,
             tasks,
         })
     }
@@ -202,10 +203,9 @@ impl Worker {
                     }
                 }
                 self.notes = Some(notes);
-                // move the config up to the gui and save.
-                warn!("Save the config");
-                self.mess.send_config(self.config.clone()).await?;
-                println!("{:#?}", &self.config);
+
+                self.save_config().await?;
+                
                 info!("exit new ticket");
                 return Ok(());
             }
@@ -242,6 +242,10 @@ impl Worker {
                 // Subscribe and get synced
                 // TODO move this into a worker
                 warn!("Start sync");
+
+                // Start the subscripion
+                self.run_sync(notes.clone()).await?;
+
                 let mut stat = notes.doc_subscribe().await?;
                 while let Some(event) = stat.next().await {
                     let event = event?;
@@ -272,9 +276,17 @@ impl Worker {
         }
     }
 
-    // -----
+    // Config save
+
+    async fn save_config(&mut self) -> Result<()> {
+        // move the config up to the gui and save.
+        warn!("Save the config");
+        self.mess.send_config(self.config.clone()).await?;
+        println!("{:#?}", &self.config);
+        Ok(())
+    }
+
     // Author maker
-    // -----
 
     async fn author(&mut self) -> Result<AuthorId> {
         Ok(match &self.config.author {
@@ -289,7 +301,7 @@ impl Worker {
 
     // Async task attachment
 
-    async fn run_sync(&mut self) -> Result<()> {
+    async fn run_sync(&mut self, notes: Notes) -> Result<()> {
         Ok(())
     }
 
