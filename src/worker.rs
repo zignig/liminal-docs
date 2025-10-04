@@ -4,18 +4,17 @@
 
 use std::{str::FromStr, sync::Arc, time::Duration};
 
-use crate::app::NotesUi;
 use crate::comms::{Command, Config, Event, MessageOut};
 use crate::notes::Notes;
 use anyhow::Result;
 use async_channel::{Receiver, Sender};
-use iroh::protocol::Router;
+// use iroh::protocol::Router;
 use iroh::{Endpoint, SecretKey};
 use iroh_blobs::BlobsProtocol;
 use iroh_docs::{AuthorId, NamespaceId};
 use iroh_docs::{DocTicket, engine::LiveEvent, protocol::Docs};
 use iroh_gossip::net::Gossip;
-use n0_future::{FuturesUnordered, StreamExt};
+use n0_future::{FuturesUnordered, Stream, StreamExt};
 use n0_watcher::Watcher;
 use tokio::{
     sync::Notify,
@@ -93,6 +92,11 @@ impl Worker {
             .bind()
             .await?;
 
+        // Wait for the base node to stabilize
+        let _ = endpoint.home_relay().initialized().await;
+        let addr = endpoint.node_addr().initialized().await;
+        warn!("{:#?}", addr);
+
         // Create the blob store
         let mut blob_path = config.store_path.clone();
         blob_path.push("blobs");
@@ -122,11 +126,11 @@ impl Worker {
             .accept(iroh_docs::ALPN, docs.clone())
             .spawn();
 
-        let addr = router.endpoint().node_addr().initialized().await;
-        warn!("{:#?}", addr);
-
         // Tasks in the worker
         let tasks = FuturesUnordered::<n0_future::boxed::BoxFuture<()>>::new();
+
+        // Send a set ready, race condition on the create vs connect to docs
+        mess.set_ready().await?;
 
         // Make the worker
         Ok(Self {
@@ -205,7 +209,7 @@ impl Worker {
                 self.notes = Some(notes);
 
                 self.save_config().await?;
-                
+
                 info!("exit new ticket");
                 return Ok(());
             }
@@ -246,15 +250,16 @@ impl Worker {
                 // Start the subscripion
                 self.run_sync(notes.clone()).await?;
 
-                let mut stat = notes.doc_subscribe().await?;
-                while let Some(event) = stat.next().await {
-                    let event = event?;
-                    warn!("{:#?}", event);
-                    match event {
-                        LiveEvent::SyncFinished(_) => break,
-                        _ => {}
-                    }
-                }
+                // let mut stat = notes.doc_subscribe().await?;
+                // while let Some(event) = stat.next().await {
+                //     let event = event?;
+                //     warn!(" Sync start => {:#?}", event);
+                //     match event {
+                //         LiveEvent::SyncFinished(_) => break,
+                //         _ => {}
+                //     }
+                // }
+
                 warn!("Finish sync");
                 self.notes = Some(notes);
                 return Ok(());
@@ -289,19 +294,26 @@ impl Worker {
     // Author maker
 
     async fn author(&mut self) -> Result<AuthorId> {
-        Ok(match &self.config.author {
+        let author = match &self.config.author {
             Some(author) => AuthorId::from_str(&author)?,
             None => {
                 let author = self.docs.author_create().await?;
                 self.config.author = Some(format!("{}", author));
                 author
             }
-        })
+        };
+        self.save_config().await?;
+        Ok(author)
     }
 
     // Async task attachment
-
+    // TODO run up a document sync and add to the join set (self.tasks)
+    // eg https://github.com/n0-computer/iroh-smol-kv/blob/main/src/lib.rs#L753
+    // and
     async fn run_sync(&mut self, notes: Notes) -> Result<()> {
+        let events = notes.doc_subscribe().await?;
+        let mess = self.mess.clone();
+        self.tasks.push(Box::pin(subscription_events(events,mess)));
         Ok(())
     }
 
@@ -323,6 +335,13 @@ impl Worker {
 }
 
 // Replica event runner
+async fn subscription_events(mut events: impl Stream<Item = Result<LiveEvent>>,mess: MessageOut) {
+    tokio::pin!(events);
+    while let Some(event) = events.next().await {
+        mess.good(format!("{:#?}",event).as_str()).await.unwrap();
+        warn!("{:#?}", event);
+    }
+}
 
 // ----------
 // Timer runner

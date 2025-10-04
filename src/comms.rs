@@ -38,6 +38,7 @@ pub enum Event {
     Tick(u64),
     StopTick,
     Finished,
+    SetReady,
 }
 
 // Outgoing Commands
@@ -172,6 +173,13 @@ impl MessageOut {
         self.emit(Event::SendShareTicket(share_ticket)).await?;
         Ok(())
     }
+
+    // Send set ready.
+    pub async fn set_ready(&self) -> Result<()> {
+        self.emit(Event::SetReady).await?;
+        Ok(())
+    }
+
 }
 
 // Message formatting

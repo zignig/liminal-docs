@@ -11,8 +11,8 @@ use crate::worker::{Worker, WorkerHandle};
 
 use anyhow::Result;
 use directories::{BaseDirs, UserDirs};
-use eframe::egui::{self, FontId, RichText, Visuals};
 use eframe::NativeOptions;
+use eframe::egui::{self, FontId, RichText, Visuals};
 use egui::Ui;
 use egui_commonmark::{CommonMarkCache, CommonMarkViewer};
 use iroh::SecretKey;
@@ -46,7 +46,7 @@ impl Default for Config {
 }
 
 // Message list max
-const MESSAGE_MAX: usize = 50;
+const MESSAGE_MAX: usize = 3;
 
 // The application
 pub struct App {
@@ -58,6 +58,7 @@ pub struct App {
 #[derive(PartialEq)]
 enum AppMode {
     Init,
+    Ready,
     Idle,
     Edit,
     GetDocTicket,
@@ -71,6 +72,7 @@ impl Display for AppMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let val = match self {
             AppMode::Init => "Init",
+            AppMode::Ready => "Ready",
             AppMode::Idle => "Idle",
             AppMode::Edit => "Editing ...",
             AppMode::Finished => "Finished",
@@ -193,6 +195,9 @@ impl AppState {
                 Event::SendShareTicket(share_ticket) => {
                     self.share_ticket = Some(share_ticket);
                 }
+                Event::SetReady => {
+                    self.mode = AppMode::Ready;
+                }
             }
         }
 
@@ -201,7 +206,8 @@ impl AppState {
 
         // Use the mode to enable and disable
         match self.mode {
-            AppMode::Init => {
+            AppMode::Init => {}
+            AppMode::Ready => {
                 if let Some(doc_id) = &self.config.doc_key {
                     self.cmd(Command::DocId(doc_id.clone()));
                     self.cmd(Command::GetNotes);
@@ -331,6 +337,7 @@ impl AppState {
                     });
                 };
             }
+            AppMode::Ready => {}
             AppMode::Edit => {
                 if let Some(current_text) = &mut self.current_text {
                     ui.vertical(|ui| {
@@ -506,6 +513,7 @@ impl NotesUi {
 
 impl NotesUi {
     fn update(&mut self, names: Vec<String>) {
+        self.notes = BTreeMap::new();
         for note in names {
             self.notes.insert(note, (false, None));
         }
