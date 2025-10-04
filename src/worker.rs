@@ -20,7 +20,7 @@ use tokio::{
     sync::Notify,
     time::{Instant, interval},
 };
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 pub struct Worker {
     pub command_rx: Receiver<Command>,

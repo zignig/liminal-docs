@@ -214,6 +214,7 @@ impl AppState {
                     self.mode = AppMode::Idle;
                 } else {
                     self.mode = AppMode::GetDocTicket;
+                    self.cmd(Command::GetNotes);
                 }
             }
             AppMode::Finished => {
@@ -342,8 +343,19 @@ impl AppState {
                 if let Some(current_text) = &mut self.current_text {
                     ui.vertical(|ui| {
                         ui.horizontal(|ui| {
-                            if ui.button("Save").clicked() {};
-                            if ui.button("Cancel").clicked() {}
+                            if ui.button("Save").clicked() {
+                                self.messages.push(MessageDisplay {
+                                    text: "(TODO) push down to worker".to_string(),
+                                    mtype: MessageType::Error,
+                                });
+                            };
+                            if ui.button("Cancel").clicked() {
+                                self.messages.push(MessageDisplay {
+                                    text: "(TODO) revert to backup text".to_string(),
+                                    mtype: MessageType::Error,
+                                });
+                                self.mode = AppMode::Idle;
+                            }
                         });
                         ui.separator();
                         let _current_doc = egui::TextEdit::multiline(current_text)
@@ -430,7 +442,7 @@ impl AppState {
         }
     }
 
-    // Show the blob ticket fetch box
+    // Show the new document ticket fetch box
     fn ticket_box(&mut self, ui: &mut Ui) {
         ui.label("Docs share ticket");
         ui.add_space(8.);
@@ -439,11 +451,18 @@ impl AppState {
             .show(ui);
         ui.add_space(5.);
         ui.horizontal(|ui| {
-            if ui.button("Replicated Documents").clicked() {
+            if ui.button("Create Duplicate").clicked() {
                 // Fetch to the default path
                 self.cmd(Command::DocTicket(self.receiver_ticket.clone()));
                 self.mode = AppMode::Idle;
             };
+            if ui.button("New Doc Set").clicked() {
+                //TODO make a new doc
+                self.messages.push(MessageDisplay {
+                    text: "(TODO) Make new doc".to_string(),
+                    mtype: MessageType::Error,
+                })
+            }
         });
     }
 

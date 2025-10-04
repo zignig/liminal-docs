@@ -3,5 +3,5 @@
 pub const ABOUT: &str = "
 This is iroh-docs markdown replicator interface.
 
-still WIP.
+Fully replicated markdown documents useing iroh-docs 
 ";
