@@ -8,7 +8,6 @@ use async_channel::Sender;
 use eframe::egui::{self};
 
 use egui::{Color32, Ui};
-use iroh::SecretKey;
 use serde_derive::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 

@@ -2,7 +2,7 @@
 // Worker
 // --------------------------
 
-use std::{path::PathBuf, str::FromStr, sync::Arc, time::Duration};
+use std::{str::FromStr, sync::Arc, time::Duration};
 
 use crate::comms::{Command, Config, Event, MessageOut};
 use crate::notes::Notes;
@@ -11,11 +11,10 @@ use async_channel::{Receiver, Sender};
 use iroh::protocol::Router;
 use iroh::{Endpoint, SecretKey};
 use iroh_blobs::BlobsProtocol;
-use iroh_docs::engine::Engine;
 use iroh_docs::{AuthorId, NamespaceId};
-use iroh_docs::{DocTicket, engine::LiveEvent, protocol::Docs, store};
+use iroh_docs::{DocTicket, engine::LiveEvent, protocol::Docs};
 use iroh_gossip::net::Gossip;
-use n0_future::StreamExt;
+use n0_future::{FuturesUnordered, StreamExt};
 use n0_watcher::Watcher;
 use tokio::{
     sync::Notify,
@@ -35,6 +34,7 @@ pub struct Worker {
     pub docs: Docs,
     pub config: Config,
     pub router: Router,
+    pub tasks: FuturesUnordered<n0_future::boxed::BoxFuture<()>>,
 }
 
 pub struct WorkerHandle {
@@ -124,6 +124,9 @@ impl Worker {
         let addr = router.endpoint().node_addr().initialized().await;
         warn!("{:#?}", addr);
 
+        // Tasks in the worker
+        let tasks = FuturesUnordered::<n0_future::boxed::BoxFuture<()>>::new();
+
         // Make the worker
         Ok(Self {
             command_rx,
@@ -137,6 +140,7 @@ impl Worker {
             config,
             notes,
             router,
+            tasks,
         })
     }
 
@@ -144,8 +148,6 @@ impl Worker {
         // the actual runner for the worker
         info!("Starting  the worker");
         loop {
-            // strictly does not need the select
-            // as there is only one thing (for now)
             tokio::select! {
                 command = self.command_rx.recv() => {
                     let command = command?;
@@ -155,6 +157,7 @@ impl Worker {
                         self.mess.finished().await?;
                     }
                 }
+                _ = self.tasks.next(), if !self.tasks.is_empty() => {}
             }
         }
     }
@@ -237,6 +240,7 @@ impl Worker {
                 // needs another thread
 
                 // Subscribe and get synced
+                // TODO move this into a worker
                 warn!("Start sync");
                 let mut stat = notes.doc_subscribe().await?;
                 while let Some(event) = stat.next().await {
@@ -269,7 +273,7 @@ impl Worker {
     }
 
     // -----
-    // Extra Function
+    // Author maker
     // -----
 
     async fn author(&mut self) -> Result<AuthorId> {
@@ -281,6 +285,12 @@ impl Worker {
                 author
             }
         })
+    }
+
+    // Async task attachment
+
+    async fn run_sync(&mut self) -> Result<()> {
+        Ok(())
     }
 
     // -----

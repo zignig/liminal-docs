@@ -3,7 +3,6 @@
 use core::f32;
 use std::collections::BTreeMap;
 use std::fmt::Display;
-use std::path::PathBuf;
 
 use crate::about::ABOUT;
 use crate::comms::{Command, Config, Event, MessageDisplay, MessageType, ProgressList};
@@ -253,6 +252,10 @@ impl AppState {
             .default_width(160.0)
             .min_width(160.0)
             .show(ctx, |ui| {
+                ui.add_space(1.);
+                ui.strong("Notes");
+                ui.separator();
+                ui.add_space(1.);
                 if let Some(name) = self.notes.show(ui) {
                     self.cmd(Command::GetNote(name));
                 }
@@ -416,7 +419,7 @@ impl AppState {
             .show(ui);
         ui.add_space(5.);
         ui.horizontal(|ui| {
-            if ui.button("Get Doc").clicked() {
+            if ui.button("Replicated Documents").clicked() {
                 // Fetch to the default path
                 self.cmd(Command::DocTicket(self.receiver_ticket.clone()));
                 self.mode = AppMode::Idle;
@@ -481,6 +484,7 @@ fn format_seconds_as_hms(total_seconds: u64) -> String {
 // Note User Interface side
 // ------
 pub struct NotesUi {
+    // docs is fast enough not to have to store in the egui side.
     notes: BTreeMap<String, (bool, Option<Note>)>,
 }
 
@@ -499,6 +503,7 @@ impl NotesUi {
         }
     }
 
+    // TODO name is wrong
     fn set(&mut self, note: Note) {
         self.notes.insert(note.id.clone(), (true, Some(note)));
     }
@@ -517,7 +522,7 @@ impl NotesUi {
             }
             // Make sure only one is active
             if active_pos != usize::MAX {
-                for (pos, (name, (active, _note))) in self.notes.iter_mut().enumerate() {
+                for (pos, (_name, (active, _note))) in self.notes.iter_mut().enumerate() {
                     if active_pos != pos {
                         *active = false;
                     }
