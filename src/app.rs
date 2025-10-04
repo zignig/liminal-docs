@@ -9,13 +9,16 @@ use crate::about::ABOUT;
 use crate::comms::{Command, Config, Event, MessageDisplay, MessageType, ProgressList};
 use crate::notes::Note;
 use crate::worker::{Worker, WorkerHandle};
+use crate::markdown;
+
 use anyhow::Result;
 use directories::{BaseDirs, UserDirs};
 use eframe::NativeOptions;
 use eframe::egui::{self, FontId, RichText, Visuals};
 use egui::Ui;
 use iroh::SecretKey;
-use rfd;
+use rfd::FileDialog;
+
 
 use tracing::{info, warn};
 
@@ -58,6 +61,7 @@ pub struct App {
 enum AppMode {
     Init,
     Idle,
+    Edit,
     GetDocTicket,
     ShareTicket,
     Finished,
@@ -70,6 +74,7 @@ impl Display for AppMode {
         let val = match self {
             AppMode::Init => "Init",
             AppMode::Idle => "Idle",
+            AppMode::Edit => "Editint ...",
             AppMode::Finished => "Finished",
             AppMode::Config => "Config",
             AppMode::About => "About...",
@@ -91,7 +96,6 @@ struct AppState {
     messages: Vec<MessageDisplay>,
     config: Config,
     elapsed: Option<u64>,
-    active: bool,
     share_ticket: Option<String>,
 }
 
@@ -138,7 +142,6 @@ impl App {
             messages: Vec::new(),
             config: config,
             elapsed: None,
-            active: false,
             share_ticket: None,
         };
 
@@ -198,7 +201,7 @@ impl AppState {
         }
 
         // active flags
-        let mut send_enabled: bool = true;
+        let mut change_enabled: bool = true;
 
         // Use the mode to enable and disable
         match self.mode {
@@ -216,7 +219,7 @@ impl AppState {
                 self.mode = AppMode::Idle;
             }
             AppMode::Config => {
-                send_enabled = false;
+                change_enabled = false;
             }
             _ => {}
         }
@@ -231,7 +234,7 @@ impl AppState {
         egui::CentralPanel::default().show(ctx, |ui| {
             // Main buttons
             ui.add_space(5.);
-            self.button_header(send_enabled, ui);
+            self.button_header(change_enabled, ui);
             // gap
             ui.separator();
             // Modal Display
@@ -311,6 +314,9 @@ impl AppState {
         match self.mode {
             AppMode::Init => {}
             AppMode::Idle => {
+                markdown::show(ui,&self.current_text);
+            }
+            AppMode::Edit => {
                 let _current_doc = egui::TextEdit::multiline(&mut self.current_text)
                     .desired_width(f32::INFINITY)
                     .show(ui);
@@ -333,7 +339,7 @@ impl AppState {
                     ui.label(RichText::new(ticket).strong().font(FontId::monospace(15.)));
                     ui.add_space(10.);
                     ui.separator();
-                    if ui.button("Ok ...").clicked() { 
+                    if ui.button("Done").clicked() { 
                         self.mode = AppMode::Idle;
                     }
                 }
@@ -355,7 +361,7 @@ impl AppState {
         ui.horizontal(|ui| {
             ui.label(self.config.download_path.display().to_string());
             if ui.button("Change").clicked() {
-                let mut new_path = rfd::FileDialog::new();
+                let mut new_path = FileDialog::new();
                 new_path = new_path.set_directory(self.config.download_path.as_path());
                 if let Some(path) = new_path.pick_folder() {
                     info!("new export path {}", path.display().to_string());

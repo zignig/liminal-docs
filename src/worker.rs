@@ -10,7 +10,7 @@ use anyhow::Result;
 use async_channel::{Receiver, Sender};
 use iroh::protocol::Router;
 use iroh::{Endpoint, SecretKey};
-use iroh_blobs::{BlobsProtocol, store::fs::FsStore};
+use iroh_blobs::BlobsProtocol;
 use iroh_docs::engine::Engine;
 use iroh_docs::{AuthorId, NamespaceId};
 use iroh_docs::{DocTicket, engine::LiveEvent, protocol::Docs, store};
@@ -177,14 +177,7 @@ impl Worker {
                 self.config.doc_key = Some(doc_ticket.capability.id().to_string());
 
                 // Create a new author if none ( not using default )
-                let author_id = match &self.config.author {
-                    Some(author) => AuthorId::from_str(&author)?,
-                    None => {
-                        let author = self.docs.author_create().await?;
-                        self.config.author = Some(format!("{}", author));
-                        author
-                    }
-                };
+                let author_id = self.author().await?;
 
                 warn!("Create the notes object");
                 // Grab the docs
@@ -238,14 +231,7 @@ impl Worker {
             Command::DocId(id) => {
                 info!("Create doc from id {}", id);
                 let id = NamespaceId::from_str(id.as_str())?;
-                let author_id = match &self.config.author {
-                    Some(author) => AuthorId::from_str(&author)?,
-                    None => {
-                        let author = self.docs.author_create().await?;
-                        self.config.author = Some(format!("{}", author));
-                        author
-                    }
-                };
+                let author_id = self.author().await?;
                 let notes =
                     Notes::from_id(id, author_id, self.blobs.clone(), self.docs.clone()).await?;
                 // needs another thread
@@ -282,7 +268,21 @@ impl Worker {
         }
     }
 
-    //
+    // -----
+    // Extra Function
+    // -----
+
+    async fn author(&mut self) -> Result<AuthorId> {
+        Ok(match &self.config.author {
+            Some(author) => AuthorId::from_str(&author)?,
+            None => {
+                let author = self.docs.author_create().await?;
+                self.config.author = Some(format!("{}", author));
+                author
+            }
+        })
+    }
+
     // -----
     // Timer functions
     //------
@@ -299,6 +299,8 @@ impl Worker {
         Ok(())
     }
 }
+
+// Replica event runner
 
 // ----------
 // Timer runner
