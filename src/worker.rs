@@ -114,6 +114,7 @@ impl Worker {
         let docs = Docs::persistent(docs_path)
             .spawn(endpoint.clone(), (*blobs).clone(), gossip.clone())
             .await?;
+
         // the notify
         let send_notify = Arc::new(Notify::new());
         // The unbuilt notes
@@ -125,10 +126,9 @@ impl Worker {
             .accept(iroh_blobs::ALPN, blobs.clone())
             .accept(iroh_docs::ALPN, docs.clone())
             .spawn();
-
-        // Tasks in the worker
+        // Create the task set 
         let tasks = FuturesUnordered::<n0_future::boxed::BoxFuture<()>>::new();
-
+        
         // Send a set ready, race condition on the create vs connect to docs
         mess.set_ready().await?;
 
@@ -162,6 +162,7 @@ impl Worker {
                         self.mess.finished().await?;
                     }
                 }
+                // Run everything in the task pool
                 _ = self.tasks.next(), if !self.tasks.is_empty() => {}
             }
         }
@@ -197,19 +198,11 @@ impl Worker {
                 )
                 .await?;
                 warn!("Start Sync");
-                // Subscribe and get synced
-                let mut stat = notes.doc_subscribe().await?;
-                while let Some(event) = stat.next().await {
-                    let event = event?;
-                    match event {
-                        LiveEvent::SyncFinished(_) => break,
-                        _ => {}
-                    }
-                }
+                // create the task to replicate
+                self.run_sync(notes.clone()).await?;
+
                 self.notes = Some(notes);
-
-                self.save_config().await?;
-
+                self.save_config().await?; 
                 info!("exit new ticket");
                 return Ok(());
             }
@@ -241,25 +234,10 @@ impl Worker {
                 let author_id = self.author().await?;
                 let notes =
                     Notes::from_id(id, author_id, self.blobs.clone(), self.docs.clone()).await?;
-                // needs another thread
-
                 // Subscribe and get synced
-                // TODO move this into a worker
                 warn!("Start sync");
-
                 // Start the subscripion
                 self.run_sync(notes.clone()).await?;
-
-                // let mut stat = notes.doc_subscribe().await?;
-                // while let Some(event) = stat.next().await {
-                //     let event = event?;
-                //     warn!(" Sync start => {:#?}", event);
-                //     match event {
-                //         LiveEvent::SyncFinished(_) => break,
-                //         _ => {}
-                //     }
-                // }
-
                 warn!("Finish sync");
                 self.notes = Some(notes);
                 return Ok(());
@@ -282,7 +260,6 @@ impl Worker {
     }
 
     // Config save
-
     async fn save_config(&mut self) -> Result<()> {
         // move the config up to the gui and save.
         warn!("Save the config");
@@ -292,7 +269,6 @@ impl Worker {
     }
 
     // Author maker
-
     async fn author(&mut self) -> Result<AuthorId> {
         let author = match &self.config.author {
             Some(author) => AuthorId::from_str(&author)?,
@@ -311,9 +287,11 @@ impl Worker {
     // eg https://github.com/n0-computer/iroh-smol-kv/blob/main/src/lib.rs#L753
     // and
     async fn run_sync(&mut self, notes: Notes) -> Result<()> {
+        warn!("Start the sync task");
         let events = notes.doc_subscribe().await?;
         let mess = self.mess.clone();
         self.tasks.push(Box::pin(subscription_events(events,mess)));
+        warn!("Task should be attached");
         Ok(())
     }
 
@@ -336,11 +314,13 @@ impl Worker {
 
 // Replica event runner
 async fn subscription_events(mut events: impl Stream<Item = Result<LiveEvent>>,mess: MessageOut) {
+    warn!("Starting Event Runner");
     tokio::pin!(events);
     while let Some(event) = events.next().await {
         mess.good(format!("{:#?}",event).as_str()).await.unwrap();
         warn!("{:#?}", event);
     }
+    error!("Event runner exited (BAD)");
 }
 
 // ----------
