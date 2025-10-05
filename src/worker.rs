@@ -266,7 +266,7 @@ impl Worker {
         // move the config up to the gui and save.
         warn!("Save the config");
         self.mess.send_config(self.config.clone()).await?;
-        println!("{:#?}", &self.config);
+        // println!("{:#?}", &self.config);
         Ok(())
     }
 
@@ -334,7 +334,7 @@ async fn subscription_events(mut events: impl Stream<Item = Result<LiveEvent>>, 
                             Ok(_) => {},
                             Err(err) => {
                         mess.error(format!("{:#?}",err).as_str()).await.unwrap();
-                        break;
+                        mess.error("TODO try again").await.unwrap();
                             },
                         };
                     },

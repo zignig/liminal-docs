@@ -92,7 +92,7 @@ struct AppState {
     mode: AppMode,
     receiver_ticket: String,
     current_text: Option<String>,
-    
+
     messages: Vec<MessageDisplay>,
     config: Config,
     elapsed: Option<u64>,
@@ -129,7 +129,7 @@ impl App {
         // Load the config
         let config: Config = confy::load(APP_NAME, None).unwrap_or_default();
         // let _ = confy::store(APP_NAME, None, &config);
-
+        println!("{:#?}",config);
         // Start up the worker , separate thread , async runner
         let handle = Worker::spawn(config.clone());
 
@@ -215,8 +215,6 @@ impl AppState {
                     self.mode = AppMode::Idle;
                 } else {
                     self.mode = AppMode::GetDocTicket;
-                    self.cmd(Command::GetNotes);
-                    self.mode = AppMode::Idle;
                 }
             }
             AppMode::Finished => {
@@ -456,6 +454,7 @@ impl AppState {
             if ui.button("Create Duplicate").clicked() {
                 // Fetch to the default path
                 self.cmd(Command::DocTicket(self.receiver_ticket.clone()));
+                self.cmd(Command::GetNotes);
                 self.mode = AppMode::Idle;
             };
             if ui.button("New Doc Set").clicked() {
@@ -521,7 +520,7 @@ fn format_seconds_as_hms(total_seconds: u64) -> String {
 // ------
 pub struct NotesUi {
     // docs is fast enough not to have to store in the egui side.
-    notes: BTreeMap<String, (bool, Option<Note>)>,
+    notes: BTreeMap<String,bool>,
 }
 
 impl NotesUi {
@@ -536,17 +535,17 @@ impl NotesUi {
     fn update(&mut self, names: Vec<String>) {
         self.notes = BTreeMap::new();
         for note in names {
-            self.notes.insert(note, (false, None));
+            self.notes.insert(note,false);
         }
     }
 
     // TODO name is wrong
     fn set(&mut self, note: Note) {
-        self.notes.insert(note.id.clone(), (true, Some(note)));
+        self.notes.insert(note.id.clone(),true);
     }
 
     fn clear_selection(&mut self) {
-        for (_, (active, _)) in self.notes.iter_mut() {
+        for (_, active) in self.notes.iter_mut() {
             *active = false;
         }
     }
@@ -557,7 +556,7 @@ impl NotesUi {
         ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
             let mut active_pos = usize::MAX;
 
-            for (pos, (name, (active, _note))) in self.notes.iter_mut().enumerate() {
+            for (pos, (name, active)) in self.notes.iter_mut().enumerate() {
                 if ui.toggle_value(active, name).clicked() {
                     active_pos = pos;
                     val = Some(name.clone());
@@ -565,7 +564,7 @@ impl NotesUi {
             }
             // Make sure only one is active
             if active_pos != usize::MAX {
-                for (pos, (_name, (active, _note))) in self.notes.iter_mut().enumerate() {
+                for (pos, (_name, active)) in self.notes.iter_mut().enumerate() {
                     if active_pos != pos {
                         *active = false;
                     }
