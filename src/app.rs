@@ -92,6 +92,7 @@ struct AppState {
     mode: AppMode,
     receiver_ticket: String,
     current_text: Option<String>,
+    
     messages: Vec<MessageDisplay>,
     config: Config,
     elapsed: Option<u64>,
@@ -215,6 +216,7 @@ impl AppState {
                 } else {
                     self.mode = AppMode::GetDocTicket;
                     self.cmd(Command::GetNotes);
+                    self.mode = AppMode::Idle;
                 }
             }
             AppMode::Finished => {

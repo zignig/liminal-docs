@@ -126,9 +126,9 @@ impl Worker {
             .accept(iroh_blobs::ALPN, blobs.clone())
             .accept(iroh_docs::ALPN, docs.clone())
             .spawn();
-        // Create the task set 
+        // Create the task set
         let tasks = FuturesUnordered::<n0_future::boxed::BoxFuture<()>>::new();
-        
+
         // Send a set ready, race condition on the create vs connect to docs
         mess.set_ready().await?;
 
@@ -179,6 +179,22 @@ impl Worker {
                 self.mess.good("Ready...").await?;
                 return Ok(());
             }
+            // Already set up in config ( attach by id )
+            Command::DocId(id) => {
+                info!("Create doc from id {}", id);
+                let id = NamespaceId::from_str(id.as_str())?;
+                let author_id = self.author().await?;
+                let notes =
+                    Notes::from_id(id, author_id, self.blobs.clone(), self.docs.clone()).await?;
+                // Subscribe and get synced
+                warn!("Start sync");
+                // Start the subscripion
+                self.run_sync(notes.clone()).await?;
+                warn!("Finish sync");
+                self.notes = Some(notes);
+                return Ok(());
+            }
+            // No doc in the config , use a doc share ticket.
             Command::DocTicket(ticket) => {
                 // schnaffle the ticket into the config
                 let doc_ticket = DocTicket::from_str(ticket.as_str())?;
@@ -202,7 +218,7 @@ impl Worker {
                 self.run_sync(notes.clone()).await?;
 
                 self.notes = Some(notes);
-                self.save_config().await?; 
+                self.save_config().await?;
                 info!("exit new ticket");
                 return Ok(());
             }
@@ -226,20 +242,6 @@ impl Worker {
                     let note_list = notes.get_note_vec().await;
                     self.mess.send_note_list(note_list).await?;
                 }
-                return Ok(());
-            }
-            Command::DocId(id) => {
-                info!("Create doc from id {}", id);
-                let id = NamespaceId::from_str(id.as_str())?;
-                let author_id = self.author().await?;
-                let notes =
-                    Notes::from_id(id, author_id, self.blobs.clone(), self.docs.clone()).await?;
-                // Subscribe and get synced
-                warn!("Start sync");
-                // Start the subscripion
-                self.run_sync(notes.clone()).await?;
-                warn!("Finish sync");
-                self.notes = Some(notes);
                 return Ok(());
             }
             Command::GetNote(id) => {
@@ -285,12 +287,11 @@ impl Worker {
     // Async task attachment
     // TODO run up a document sync and add to the join set (self.tasks)
     // eg https://github.com/n0-computer/iroh-smol-kv/blob/main/src/lib.rs#L753
-    // and
     async fn run_sync(&mut self, notes: Notes) -> Result<()> {
         warn!("Start the sync task");
         let events = notes.doc_subscribe().await?;
         let mess = self.mess.clone();
-        self.tasks.push(Box::pin(subscription_events(events,mess)));
+        self.tasks.push(Box::pin(subscription_events(events, mess)));
         warn!("Task should be attached");
         Ok(())
     }
@@ -313,12 +314,39 @@ impl Worker {
 }
 
 // Replica event runner
-async fn subscription_events(mut events: impl Stream<Item = Result<LiveEvent>>,mess: MessageOut) {
+async fn subscription_events(mut events: impl Stream<Item = Result<LiveEvent>>, mess: MessageOut) {
     warn!("Starting Event Runner");
+    let mut timer = interval(Duration::from_millis(5000));
     tokio::pin!(events);
-    while let Some(event) = events.next().await {
-        mess.good(format!("{:#?}",event).as_str()).await.unwrap();
-        warn!("{:#?}", event);
+    loop {
+        tokio::select! {
+            Some(event) = events.next() => {
+                let event = match event {
+                    Ok(event) => event,
+                    Err(err) => {
+                        mess.error(format!("{:#?}",err).as_str()).await.unwrap();
+                        break;
+                    },
+                };
+                match event {
+                    LiveEvent::SyncFinished( ref sync_event) => {
+                        match  &sync_event.result  {
+                            Ok(_) => {},
+                            Err(err) => {
+                        mess.error(format!("{:#?}",err).as_str()).await.unwrap();
+                        break;
+                            },
+                        };
+                    },
+                    _ => {}
+                }
+                mess.good(format!("{:#?}",event).as_str()).await.unwrap();
+                warn!("{:#?}", &event);
+            },
+            _ = timer.tick() => {
+                warn!("tick");
+            }
+        }
     }
     error!("Event runner exited (BAD)");
 }
