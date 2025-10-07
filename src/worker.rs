@@ -8,6 +8,7 @@ use crate::comms::{Command, Config, Event, MessageOut};
 use crate::notes::Notes;
 use anyhow::Result;
 use async_channel::{Receiver, Sender};
+use iroh::protocol::Router;
 // use iroh::protocol::Router;
 use iroh::{Endpoint, SecretKey};
 use iroh_blobs::BlobsProtocol;
@@ -28,12 +29,12 @@ pub struct Worker {
     pub timer_out: Sender<TimerCommands>,
     pub blobs: BlobsProtocol,
     pub send_notify: Arc<Notify>,
-    //pub endpoint: Endpoint,
+    _endpoint: Endpoint,
     pub notes: Option<Notes>,
-    //pub gossip: Gossip,
+    _gossip: Gossip,
     pub docs: Docs,
     pub config: Config,
-    //pub router: Router,
+    _router: Router,
     pub tasks: FuturesUnordered<n0_future::boxed::BoxFuture<()>>,
 }
 
@@ -139,12 +140,12 @@ impl Worker {
             timer_out,
             blobs,
             send_notify,
-            //endpoint,
-            //gossip,
+            _endpoint : endpoint,
+            _gossip : gossip,
             docs,
             config,
             notes,
-            //router,
+            _router : router,
             tasks,
         })
     }
@@ -237,6 +238,13 @@ impl Worker {
                 self.config = config;
                 return Ok(());
             }
+            Command::SaveNote(id, text) => {
+                warn!("note info => \"{}\" \"{}\"", id, text);
+                if let Some(notes) = &self.notes {
+                    notes.update_note(id, text).await?;
+                }
+                return Ok(());
+            }
             Command::GetNotes => {
                 if let Some(notes) = &self.notes {
                     let note_list = notes.get_note_vec().await;
@@ -257,6 +265,22 @@ impl Worker {
                     self.mess.share_ticket(share_ticket).await?;
                 }
                 return Ok(());
+            }
+            Command::DeleteHidden => { 
+                if let Some(notes) = &self.notes {
+                    notes.delete_hidden().await?;
+                    self.mess.info("delete hidden").await?; 
+
+                }
+                return Ok(());
+            }
+            Command::HideNote(name) => { 
+                if let Some(notes) = &self.notes {
+                    notes.set_delete(name).await?;
+                    self.mess.info("hide note").await?; 
+                }
+                return Ok(());
+
             }
         }
     }
@@ -314,7 +338,7 @@ impl Worker {
 }
 
 // Replica event runner
-async fn subscription_events(mut events: impl Stream<Item = Result<LiveEvent>>, mess: MessageOut) {
+async fn subscription_events(events: impl Stream<Item = Result<LiveEvent>>, mess: MessageOut) {
     warn!("Starting Event Runner");
     let mut timer = interval(Duration::from_millis(5000));
     tokio::pin!(events);

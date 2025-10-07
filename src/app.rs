@@ -91,14 +91,15 @@ struct AppState {
     worker: WorkerHandle,
     mode: AppMode,
     receiver_ticket: String,
-    current_text: Option<String>,
-
+    current_note: Option<Note>,
+    current_text: String,
+    backup_text: String,
     messages: Vec<MessageDisplay>,
     config: Config,
     elapsed: Option<u64>,
     share_ticket: Option<String>,
     cache: CommonMarkCache,
-    current_note: Option<Note>,
+    new_note_name: String,
 }
 
 // Make the egui impl for display
@@ -129,7 +130,7 @@ impl App {
         // Load the config
         let config: Config = confy::load(APP_NAME, None).unwrap_or_default();
         // let _ = confy::store(APP_NAME, None, &config);
-        println!("{:#?}",config);
+        println!("{:#?}", config);
         // Start up the worker , separate thread , async runner
         let handle = Worker::spawn(config.clone());
 
@@ -138,14 +139,16 @@ impl App {
             notes: NotesUi::new(),
             worker: handle,
             mode: AppMode::Init,
-            receiver_ticket: String::new(),
-            current_text: None,
+            backup_text: String::new(),
+            current_note: None,
+            current_text: String::new(),
             messages: Vec::new(),
             config: config,
             elapsed: None,
             share_ticket: None,
             cache: CommonMarkCache::default(),
-            current_note: None,
+            receiver_ticket: String::new(),
+            new_note_name: String::new(),
         };
 
         // New App
@@ -190,7 +193,7 @@ impl AppState {
                 }
                 Event::SendNote(note) => {
                     self.notes.set(note.clone());
-                    self.current_text = Some(note.text);
+                    self.current_note = Some(note);
                     // self.current_note = Some(note.clone());
                 }
                 Event::SendShareTicket(share_ticket) => {
@@ -251,12 +254,28 @@ impl AppState {
     fn side_panel(&mut self, ctx: &egui::Context) {
         egui::SidePanel::left("doc list")
             .resizable(false)
-            .default_width(160.0)
+            .default_width(160.)
             .min_width(160.0)
             .show(ctx, |ui| {
                 ui.add_space(10.);
                 ui.strong("Notes");
                 ui.add_space(1.);
+                ui.horizontal(|ui| {
+                    let name =
+                        egui::TextEdit::singleline(&mut self.new_note_name).desired_width(100.);
+                    ui.add(name);
+
+                    if ui.button("New").clicked() {
+                        if !self.new_note_name.is_empty() {
+                            warn!("make new note : {}", self.new_note_name);
+                            let id = self.new_note_name.clone();
+                            self.current_note = Some(Note::missing_note(id));
+                            self.current_text = String::new();
+                            self.new_note_name = String::new();
+                            self.mode = AppMode::Edit;
+                        }
+                    }
+                });
                 ui.separator();
                 ui.add_space(1.);
                 if let Some(name) = self.notes.show(ui) {
@@ -311,8 +330,15 @@ impl AppState {
                 if ui.button("Config").clicked() {
                     self.mode = AppMode::Config;
                 }
+                if ui.button("Delete Hidden").clicked() {
+                    self.cmd(Command::DeleteHidden);
+                }
             });
             ui.add_space(5.);
+            if let Some(current_note) = &mut self.current_note {
+                ui.strong(&current_note.id);
+                ui.checkbox(&mut current_note.is_delete, "hide");
+            }
         });
     }
 
@@ -322,43 +348,48 @@ impl AppState {
         match self.mode {
             AppMode::Init => {}
             AppMode::Idle => {
-                if let Some(current_text) = &self.current_text {
+                if let Some(current_note) = &self.current_note {
                     let viewer = CommonMarkViewer::new();
                     ui.vertical(|ui| {
                         if ui.button("Edit").clicked() {
+                            self.backup_text = current_note.text.clone();
+                            self.current_text = current_note.text.clone();
                             self.mode = AppMode::Edit;
+                        };
+                        if ui.button("Hide").clicked() {
+                            let id = current_note.id.clone();
+                            self.mode = AppMode::Idle;
                         };
                         ui.separator();
                         viewer.show_scrollable(
                             "markdown",
                             ui,
                             &mut self.cache,
-                            current_text.as_str(),
+                            current_note.text.as_str(),
                         );
                     });
                 };
             }
             AppMode::Ready => {}
             AppMode::Edit => {
-                if let Some(current_text) = &mut self.current_text {
+                if let Some(current_note) = &mut self.current_note.clone() {
                     ui.vertical(|ui| {
                         ui.horizontal(|ui| {
                             if ui.button("Save").clicked() {
-                                self.messages.push(MessageDisplay {
-                                    text: "(TODO) push down to worker".to_string(),
-                                    mtype: MessageType::Error,
-                                });
+                                let id = current_note.id.clone();
+                                let text = self.current_text.clone();
+                                current_note.text = text.clone();
+                                self.cmd(Command::SaveNote(id.clone(), text));
+                                self.mode = AppMode::Idle;
+                                self.cmd(Command::GetNote(id));
                             };
                             if ui.button("Cancel").clicked() {
-                                self.messages.push(MessageDisplay {
-                                    text: "(TODO) revert to backup text".to_string(),
-                                    mtype: MessageType::Error,
-                                });
+                                self.current_text = self.backup_text.clone();
                                 self.mode = AppMode::Idle;
                             }
                         });
                         ui.separator();
-                        let _current_doc = egui::TextEdit::multiline(current_text)
+                        let _current_doc = egui::TextEdit::multiline(&mut self.current_text)
                             .desired_width(f32::INFINITY)
                             .show(ui);
                         ui.separator();
@@ -472,7 +503,7 @@ impl AppState {
         self.mode = AppMode::Idle;
         self.receiver_ticket = "".to_string();
         self.messages = Vec::new();
-        self.current_text = None;
+        self.current_note = None;
         self.notes.clear_selection();
     }
 
@@ -520,7 +551,7 @@ fn format_seconds_as_hms(total_seconds: u64) -> String {
 // ------
 pub struct NotesUi {
     // docs is fast enough not to have to store in the egui side.
-    notes: BTreeMap<String,bool>,
+    notes: BTreeMap<String, bool>,
 }
 
 impl NotesUi {
@@ -535,13 +566,13 @@ impl NotesUi {
     fn update(&mut self, names: Vec<String>) {
         self.notes = BTreeMap::new();
         for note in names {
-            self.notes.insert(note,false);
+            self.notes.insert(note, false);
         }
     }
 
     // TODO name is wrong
     fn set(&mut self, note: Note) {
-        self.notes.insert(note.id.clone(),true);
+        self.notes.insert(note.id.clone(), true);
     }
 
     fn clear_selection(&mut self) {

@@ -60,7 +60,7 @@ impl Note {
         Ok(buf.into())
     }
 
-    fn missing_note(id: String) -> Self {
+    pub fn missing_note(id: String) -> Self {
         Self {
             text: String::from(""),
             created: 0,

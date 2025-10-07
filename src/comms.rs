@@ -50,8 +50,11 @@ pub enum Command {
     GetNotes,
     GetNote(String),
     SendConfig(Config),
+    SaveNote(String,String),
     ResetTimer,
     CancelSend,
+    DeleteHidden,
+    HideNote(String),
 }
 
 // Message types
