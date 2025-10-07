@@ -71,6 +71,7 @@ impl Note {
         }
     }
 
+    #[allow(dead_code)]
     pub fn bad_note() -> Self {
         Self {
             text: String::from("bad_note"),
@@ -147,7 +148,7 @@ impl Notes {
             author,
         })))
     }
-
+    #[allow(dead_code)]
     pub fn id(&self) -> [u8; 32] {
         self.0.doc.id().to_bytes()
     }
@@ -160,6 +161,11 @@ impl Notes {
         self.0.doc.subscribe().await
     }
 
+       pub async fn share(&self) -> Result<()> {
+        self.0.doc.start_sync(vec![]).await?;
+        Ok(())
+    }
+    
     pub async fn create(&self, id: String, text: String) -> Result<()> {
         if text.len() > MAX_TEXT_LEN {
             bail!("text is too long, max size is {MAX_TEXT_LEN}");
@@ -239,6 +245,7 @@ impl Notes {
         }
     }
 
+    #[allow(dead_code)]
     pub async fn delete_note(&self, id: String) -> Result<()> {
         // let note = self.get_note(id.clone()).await?;
         let val = self.0.doc.del(self.0.author, id.clone()).await?;
@@ -254,7 +261,7 @@ impl Notes {
             let note = self.note_from_entry(&entry).await?;
             if note.is_delete {
                 // println!("{:#?}", note);
-                let val = self
+                let _val = self
                     .0
                     .doc
                     .del(self.0.author, entry.key().to_owned())
@@ -296,6 +303,7 @@ impl Notes {
     }
 
     // Save out the docs as date stamped .md files
+    #[allow(dead_code)]
     pub async fn bounce_down(&self) -> Result<()> {
         let entries = self.0.doc.get_many(Query::single_latest_per_key()).await?;
         let mut notes = Vec::new();
@@ -327,6 +335,7 @@ impl Notes {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub async fn bounce_up(&self) -> Result<()> {
         let tag = match self.0.blobs.tags().get("notes").await? {
             Some(tag) => tag,

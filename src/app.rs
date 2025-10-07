@@ -41,6 +41,7 @@ impl Default for Config {
             secret_key,
             doc_key: None,
             author: None,
+            mothership: None,
         }
     }
 }
@@ -410,6 +411,7 @@ impl AppState {
                                     println!("note id presave => {}", id);
                                     self.cmd(Command::NewNote(id.clone(), text));
                                     self.mode = AppMode::Idle;
+                                    self.notes.clear_selection();
                                     self.cmd(Command::GetNote(id));
                                 };
                             };

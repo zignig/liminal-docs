@@ -23,6 +23,7 @@ pub struct Config {
     pub secret_key: String,
     pub doc_key: Option<String>,
     pub author: Option<String>,
+    pub mothership: Option<String>,
 }
 
 // Update Callback

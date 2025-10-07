@@ -25,6 +25,7 @@ use tracing::{error, info, warn};
 
 pub struct Worker {
     pub command_rx: Receiver<Command>,
+    pub command_tx: Sender<Command>,
     pub mess: MessageOut,
     pub timer_out: Sender<TimerCommands>,
     pub blobs: BlobsProtocol,
@@ -47,6 +48,9 @@ impl Worker {
     pub fn spawn(config: Config) -> WorkerHandle {
         let (command_tx, command_rx) = async_channel::bounded(16);
         let (event_tx, event_rx) = async_channel::bounded(16);
+        // can send commands to itself
+        let command_tx_self = command_tx.clone();
+        // make the handle
         let handle = WorkerHandle {
             command_tx,
             event_rx,
@@ -54,13 +58,14 @@ impl Worker {
         // Spawn a new worker as a seperate thread.
         //  egui is sync the worker is async , comms are a channel of commands and events
         // events are wrapped in MessageOut for formatting and goodness
+
         std::thread::spawn(move || {
             let rt = tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
                 .build()
                 .expect("failed to start tokio runtime");
             rt.block_on(async move {
-                let mut worker = Worker::start(command_rx, event_tx, config)
+                let mut worker = Worker::start(command_rx, command_tx_self, event_tx, config)
                     .await
                     .expect("Worker failed to start");
                 if let Err(err) = worker.run().await {
@@ -74,6 +79,8 @@ impl Worker {
     //
     async fn start(
         command_rx: async_channel::Receiver<Command>,
+        // Send commands to myself
+        command_tx: async_channel::Sender<Command>,
         event_tx: async_channel::Sender<Event>,
         config: Config,
     ) -> Result<Self> {
@@ -136,6 +143,7 @@ impl Worker {
         // Make the worker
         Ok(Self {
             command_rx,
+            command_tx,
             mess,
             timer_out,
             blobs,
@@ -190,7 +198,9 @@ impl Worker {
                 // Subscribe and get synced
                 warn!("Start sync");
                 // Start the subscripion
-                self.run_sync(notes.clone()).await?;
+
+                self.run_sync(notes.clone(), self.command_tx.clone())
+                    .await?;
                 warn!("Finish sync");
                 self.notes = Some(notes);
                 return Ok(());
@@ -216,7 +226,8 @@ impl Worker {
                 .await?;
                 warn!("Start Sync");
                 // create the task to replicate
-                self.run_sync(notes.clone()).await?;
+                self.run_sync(notes.clone(), self.command_tx.clone())
+                    .await?;
 
                 self.notes = Some(notes);
                 self.save_config().await?;
@@ -245,12 +256,12 @@ impl Worker {
                 }
                 return Ok(());
             }
-            Command::NewNote(id,text ) => { 
+            Command::NewNote(id, text) => {
                 warn!("create note => \"{}\" \"{}\"", id, text);
                 if let Some(notes) = &self.notes {
                     notes.create(id, text).await?;
                 }
-                return Ok(());           
+                return Ok(());
             }
             Command::GetNotes => {
                 if let Some(notes) = &self.notes {
@@ -320,11 +331,17 @@ impl Worker {
     // Async task attachment
     // TODO run up a document sync and add to the join set (self.tasks)
     // eg https://github.com/n0-computer/iroh-smol-kv/blob/main/src/lib.rs#L753
-    async fn run_sync(&mut self, notes: Notes) -> Result<()> {
+    async fn run_sync(
+        &mut self,
+        notes: Notes,
+        command_tx: async_channel::Sender<Command>,
+    ) -> Result<()> {
         warn!("Start the sync task");
+        notes.share().await?;
         let events = notes.doc_subscribe().await?;
         let mess = self.mess.clone();
-        self.tasks.push(Box::pin(subscription_events(events, mess)));
+        self.tasks
+            .push(Box::pin(subscription_events(events, mess, command_tx)));
         warn!("Task should be attached");
         Ok(())
     }
@@ -344,12 +361,17 @@ impl Worker {
         self.timer_out.send(TimerCommands::Reset).await?;
         Ok(())
     }
+
 }
 
 // Replica event runner
-async fn subscription_events(events: impl Stream<Item = Result<LiveEvent>>, mess: MessageOut) {
+async fn subscription_events(
+    events: impl Stream<Item = Result<LiveEvent>>,
+    mess: MessageOut,
+    command_tx: async_channel::Sender<Command>,
+) {
     warn!("Starting Event Runner");
-    let mut timer = interval(Duration::from_millis(5000));
+    let mut timer = interval(Duration::from_secs(15));
     tokio::pin!(events);
     loop {
         tokio::select! {
@@ -362,18 +384,22 @@ async fn subscription_events(events: impl Stream<Item = Result<LiveEvent>>, mess
                     },
                 };
                 match event {
+                    LiveEvent::InsertRemote{from: _, ref entry,content_status: _} => {
+                        warn!("remote entry => {:#?}",entry);
+                    }
                     LiveEvent::SyncFinished( ref sync_event) => {
                         match  &sync_event.result  {
                             Ok(_) => {},
                             Err(err) => {
-                        mess.error(format!("{:#?}",err).as_str()).await.unwrap();
-                        mess.error("TODO try again").await.unwrap();
+                                mess.error(format!("{:#?}",err).as_str()).await.unwrap();
+                                mess.error("TODO try again").await.unwrap();
+                                command_tx.send(Command::ResetTimer).await.unwrap();
                             },
                         };
                     },
                     _ => {}
                 }
-                mess.good(format!("{:#?}",event).as_str()).await.unwrap();
+                // mess.good(format!("{:#?}",event).as_str()).await.unwrap();
                 warn!("{:#?}", &event);
             },
             _ = timer.tick() => {
