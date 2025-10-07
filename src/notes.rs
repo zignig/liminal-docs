@@ -34,6 +34,7 @@ use iroh_docs::{
 // use n0_watcher::Watcher;
 use n0_future::{Stream, StreamExt};
 use serde::{Deserialize, Serialize};
+use tracing::warn;
 
 // Individual notes
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -237,6 +238,13 @@ impl Notes {
         }
     }
 
+    pub async fn delete_note(&self,id: String) -> Result<()> { 
+        // let note = self.get_note(id.clone()).await?;
+        let val = self.0.doc.del(self.0.author,id.clone()).await?; 
+        warn!("deleted {} , {} ",&id,val);
+        Ok(())
+    }
+
     pub async fn delete_hidden(&self) -> Result<()> {
         let entries = self.0.doc.get_many(Query::single_latest_per_key()).await?;
         tokio::pin!(entries);
@@ -259,7 +267,7 @@ impl Notes {
     pub async fn set_delete(&self, id: String) -> Result<()> {
         let mut note = self.get_note(id.clone()).await?;
         note.is_delete = !note.is_delete;
-        self.update_bytes(id, note).await
+        self.update_bytes(id.clone(), note).await
     }
 
     // Doc data manipulation
@@ -268,9 +276,7 @@ impl Notes {
     async fn insert_bytes(&self, key: impl AsRef<[u8]>, value: Bytes) -> Result<()> {
         // null byte exend the key
         let mut ex_key = key.as_ref().to_vec();
-        // add the null byte, why ??
         ex_key.push(0);
-        // harrahs b5 to not do this
         self.0.doc.set_bytes(self.0.author, ex_key, value).await?;
         Ok(())
     }

@@ -350,22 +350,28 @@ impl AppState {
             AppMode::Idle => {
                 if let Some(current_note) = &self.current_note {
                     let viewer = CommonMarkViewer::new();
+                    let current_note = current_note.clone();
                     ui.vertical(|ui| {
-                        if ui.button("Edit").clicked() {
-                            self.backup_text = current_note.text.clone();
-                            self.current_text = current_note.text.clone();
-                            self.mode = AppMode::Edit;
-                        };
-                        if ui.button("Hide").clicked() {
-                            let id = current_note.id.clone();
-                            self.mode = AppMode::Idle;
-                        };
+                        ui.horizontal(|ui| {
+                            if ui.button("Edit").clicked() {
+                                self.backup_text = current_note.text.clone();
+                                self.current_text = current_note.text.clone();
+                                self.mode = AppMode::Edit;
+                            };
+                            ui.add_space(40.);
+                            if ui.button("Delete").clicked() {
+                                let id = current_note.id.clone();
+                                self.cmd(Command::HideNote(id));
+                                self.cmd(Command::GetNotes);
+                                self.mode = AppMode::Idle;
+                            };
+                        });
                         ui.separator();
                         viewer.show_scrollable(
                             "markdown",
                             ui,
                             &mut self.cache,
-                            current_note.text.as_str(),
+                            &current_note.text.as_str(),
                         );
                     });
                 };
@@ -374,6 +380,8 @@ impl AppState {
             AppMode::Edit => {
                 if let Some(current_note) = &mut self.current_note.clone() {
                     ui.vertical(|ui| {
+                        ui.label(&current_note.id);
+                        ui.separator();
                         ui.horizontal(|ui| {
                             if ui.button("Save").clicked() {
                                 let id = current_note.id.clone();
@@ -389,10 +397,9 @@ impl AppState {
                             }
                         });
                         ui.separator();
-                        let _current_doc = egui::TextEdit::multiline(&mut self.current_text)
+                        let current_doc = egui::TextEdit::multiline(&mut self.current_text)
                             .desired_width(f32::INFINITY)
                             .show(ui);
-                        ui.separator();
                     });
                 }
             }

@@ -140,12 +140,12 @@ impl Worker {
             timer_out,
             blobs,
             send_notify,
-            _endpoint : endpoint,
-            _gossip : gossip,
+            _endpoint: endpoint,
+            _gossip: gossip,
             docs,
             config,
             notes,
-            _router : router,
+            _router: router,
             tasks,
         })
     }
@@ -255,6 +255,7 @@ impl Worker {
             Command::GetNote(id) => {
                 if let Some(notes) = &self.notes {
                     let note = notes.get_note(id).await?;
+                    println!("{:#?}", &note);
                     self.mess.send_note(note).await?;
                 }
                 return Ok(());
@@ -266,21 +267,22 @@ impl Worker {
                 }
                 return Ok(());
             }
-            Command::DeleteHidden => { 
+            Command::DeleteHidden => {
                 if let Some(notes) = &self.notes {
                     notes.delete_hidden().await?;
-                    self.mess.info("delete hidden").await?; 
-
+                    self.mess.info("delete hidden").await?;
                 }
                 return Ok(());
             }
-            Command::HideNote(name) => { 
+            Command::HideNote(id) => {
                 if let Some(notes) = &self.notes {
-                    notes.set_delete(name).await?;
-                    self.mess.info("hide note").await?; 
+                    // notes.delete_note(id).await?;
+                    notes.set_delete(id.clone()).await?;
+                    let info = notes.get_note(id).await?;
+                    println!("{:#?}", info);
+                    self.mess.info("hide note").await?;
                 }
                 return Ok(());
-
             }
         }
     }
