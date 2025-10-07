@@ -245,6 +245,13 @@ impl Worker {
                 }
                 return Ok(());
             }
+            Command::NewNote(id,text ) => { 
+                warn!("create note => \"{}\" \"{}\"", id, text);
+                if let Some(notes) = &self.notes {
+                    notes.create(id, text).await?;
+                }
+                return Ok(());           
+            }
             Command::GetNotes => {
                 if let Some(notes) = &self.notes {
                     let note_list = notes.get_note_vec().await;
@@ -255,7 +262,7 @@ impl Worker {
             Command::GetNote(id) => {
                 if let Some(notes) = &self.notes {
                     let note = notes.get_note(id).await?;
-                    println!("{:#?}", &note);
+                    // println!("{:#?}", &note);
                     self.mess.send_note(note).await?;
                 }
                 return Ok(());

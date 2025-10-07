@@ -61,6 +61,7 @@ enum AppMode {
     Ready,
     Idle,
     Edit,
+    NewNote,
     GetDocTicket,
     ShareTicket,
     Finished,
@@ -75,6 +76,7 @@ impl Display for AppMode {
             AppMode::Ready => "Ready",
             AppMode::Idle => "Idle",
             AppMode::Edit => "Editing ...",
+            AppMode::NewNote => "NewNote ...",
             AppMode::Finished => "Finished",
             AppMode::Config => "Config",
             AppMode::About => "About...",
@@ -129,8 +131,7 @@ impl App {
     pub fn run(options: NativeOptions) -> Result<(), eframe::Error> {
         // Load the config
         let config: Config = confy::load(APP_NAME, None).unwrap_or_default();
-        // let _ = confy::store(APP_NAME, None, &config);
-        println!("{:#?}", config);
+        // println!("{:#?}", config);
         // Start up the worker , separate thread , async runner
         let handle = Worker::spawn(config.clone());
 
@@ -268,11 +269,19 @@ impl AppState {
                     if ui.button("New").clicked() {
                         if !self.new_note_name.is_empty() {
                             warn!("make new note : {}", self.new_note_name);
-                            let id = self.new_note_name.clone();
+                            let id = self
+                                .new_note_name
+                                .clone()
+                                .chars()
+                                .filter(|c| c.is_ascii_alphanumeric() || c.is_whitespace())
+                                .collect();
                             self.current_note = Some(Note::missing_note(id));
                             self.current_text = String::new();
                             self.new_note_name = String::new();
-                            self.mode = AppMode::Edit;
+                            self.mode = AppMode::NewNote;
+                            if let Some(note) = &self.current_note {
+                                println!("{:#?}", note);
+                            }
                         }
                     }
                 });
@@ -335,10 +344,6 @@ impl AppState {
                 }
             });
             ui.add_space(5.);
-            if let Some(current_note) = &mut self.current_note {
-                ui.strong(&current_note.id);
-                ui.checkbox(&mut current_note.is_delete, "hide");
-            }
         });
     }
 
@@ -352,6 +357,8 @@ impl AppState {
                     let viewer = CommonMarkViewer::new();
                     let current_note = current_note.clone();
                     ui.vertical(|ui| {
+                        ui.strong(&current_note.id);
+                        ui.separator();
                         ui.horizontal(|ui| {
                             if ui.button("Edit").clicked() {
                                 self.backup_text = current_note.text.clone();
@@ -363,6 +370,7 @@ impl AppState {
                                 let id = current_note.id.clone();
                                 self.cmd(Command::HideNote(id));
                                 self.cmd(Command::GetNotes);
+                                self.current_note = None;
                                 self.mode = AppMode::Idle;
                             };
                         });
@@ -377,27 +385,42 @@ impl AppState {
                 };
             }
             AppMode::Ready => {}
-            AppMode::Edit => {
+            AppMode::Edit | AppMode::NewNote => {
                 if let Some(current_note) = &mut self.current_note.clone() {
                     ui.vertical(|ui| {
-                        ui.label(&current_note.id);
+                        ui.strong(&current_note.id);
                         ui.separator();
                         ui.horizontal(|ui| {
-                            if ui.button("Save").clicked() {
-                                let id = current_note.id.clone();
-                                let text = self.current_text.clone();
-                                current_note.text = text.clone();
-                                self.cmd(Command::SaveNote(id.clone(), text));
-                                self.mode = AppMode::Idle;
-                                self.cmd(Command::GetNote(id));
+                            if self.mode == AppMode::Edit {
+                                if ui.button("Save").clicked() {
+                                    let id = current_note.id.clone();
+                                    let text = self.current_text.clone();
+                                    current_note.text = text.clone();
+                                    println!("note id presave => {}", id);
+                                    self.cmd(Command::SaveNote(id.clone(), text));
+                                    self.mode = AppMode::Idle;
+                                    self.cmd(Command::GetNote(id));
+                                };
                             };
+                            if self.mode == AppMode::NewNote {
+                                if ui.button("Create Note").clicked() {
+                                    let id = current_note.id.clone();
+                                    let text = self.current_text.clone();
+                                    current_note.text = text.clone();
+                                    println!("note id presave => {}", id);
+                                    self.cmd(Command::NewNote(id.clone(), text));
+                                    self.mode = AppMode::Idle;
+                                    self.cmd(Command::GetNote(id));
+                                };
+                            };
+                            ui.add_space(10.);
                             if ui.button("Cancel").clicked() {
                                 self.current_text = self.backup_text.clone();
                                 self.mode = AppMode::Idle;
                             }
                         });
                         ui.separator();
-                        let current_doc = egui::TextEdit::multiline(&mut self.current_text)
+                        let _current_doc = egui::TextEdit::multiline(&mut self.current_text)
                             .desired_width(f32::INFINITY)
                             .show(ui);
                     });

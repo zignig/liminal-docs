@@ -92,7 +92,6 @@ pub struct Notes(Arc<Inner>);
 #[derive(Debug, Clone)]
 pub struct Inner {
     blobs: BlobsProtocol,
-    docs: Docs,
     doc: Doc,
     ticket: DocTicket,
     author: AuthorId,
@@ -120,7 +119,6 @@ impl Notes {
 
         Ok(Self(Arc::new(Inner {
             blobs,
-            docs,
             doc,
             ticket,
             author,
@@ -144,7 +142,6 @@ impl Notes {
         let author = author;
         Ok(Self(Arc::new(Inner {
             blobs,
-            docs,
             doc,
             ticket,
             author,
@@ -215,7 +212,10 @@ impl Notes {
             .get_one(Query::single_latest_per_key().key_exact(&ex_key))
             .await?;
         match entry_option {
-            Some(entry) => self.note_from_entry(&entry).await,
+            Some(entry) => {
+                // println!("{:#?}", entry);
+                self.note_from_entry(&entry).await
+            }
             None => Ok(Note::missing_note(id.clone())),
         }
     }
@@ -231,6 +231,7 @@ impl Notes {
         };
         note.text = text;
         note.updated = Utc::now().timestamp();
+        warn!("note prewrite id {:#?} , {:#?}", &id.as_bytes(), &note);
         let res = self.update_bytes(id.as_bytes(), note).await;
         match res {
             Ok(_) => Ok(()),
@@ -238,10 +239,10 @@ impl Notes {
         }
     }
 
-    pub async fn delete_note(&self,id: String) -> Result<()> { 
+    pub async fn delete_note(&self, id: String) -> Result<()> {
         // let note = self.get_note(id.clone()).await?;
-        let val = self.0.doc.del(self.0.author,id.clone()).await?; 
-        warn!("deleted {} , {} ",&id,val);
+        let val = self.0.doc.del(self.0.author, id.clone()).await?;
+        warn!("deleted {} , {} ", &id, val);
         Ok(())
     }
 
@@ -252,13 +253,13 @@ impl Notes {
             let entry = entry?;
             let note = self.note_from_entry(&entry).await?;
             if note.is_delete {
-                println!("{:#?}", note);
+                // println!("{:#?}", note);
                 let val = self
                     .0
                     .doc
                     .del(self.0.author, entry.key().to_owned())
                     .await?;
-                println!("{:?} nodes deleted", val);
+                // println!("{:?} nodes deleted", val);
             }
         }
         Ok(())
