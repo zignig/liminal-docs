@@ -32,7 +32,7 @@ impl Default for Config {
             Some(base_dirs) => base_dirs.data_dir().to_owned().join(APP_NAME),
             None => std::process::exit(1),
         };
-        let secret_key = SecretKey::generate(rand::rngs::OsRng);
+        let secret_key = SecretKey::generate(&mut rand::rng());
         let secret_key = data_encoding::HEXLOWER.encode(&secret_key.to_bytes());
         Self {
             dark_mode: true,

@@ -16,7 +16,6 @@ use iroh_docs::{AuthorId, NamespaceId};
 use iroh_docs::{DocTicket, engine::LiveEvent, protocol::Docs};
 use iroh_gossip::net::Gossip;
 use n0_future::{FuturesUnordered, Stream, StreamExt};
-use n0_watcher::Watcher;
 use tokio::{
     sync::Notify,
     time::{Instant, interval},
@@ -29,7 +28,6 @@ pub struct Worker {
     pub mess: MessageOut,
     pub timer_out: Sender<TimerCommands>,
     pub blobs: BlobsProtocol,
-    pub send_notify: Arc<Notify>,
     _endpoint: Endpoint,
     pub notes: Option<Notes>,
     _gossip: Gossip,
@@ -100,18 +98,13 @@ impl Worker {
             .bind()
             .await?;
 
-        // Wait for the base node to stabilize
-        let _ = endpoint.home_relay().initialized().await;
-        let addr = endpoint.node_addr().initialized().await;
-        warn!("{:#?}", addr);
-
         // Create the blob store
         let mut blob_path = config.store_path.clone();
         blob_path.push("blobs");
         let store = iroh_blobs::store::fs::FsStore::load(&blob_path)
             .await
             .unwrap();
-        let blobs = iroh_blobs::BlobsProtocol::new(&store, endpoint.clone(), None);
+        let blobs = iroh_blobs::BlobsProtocol::new(&store, None);
 
         // Create the gossip
         let gossip = Gossip::builder().spawn(endpoint.clone());
@@ -147,7 +140,6 @@ impl Worker {
             mess,
             timer_out,
             blobs,
-            send_notify,
             _endpoint: endpoint,
             _gossip: gossip,
             docs,
@@ -232,12 +224,6 @@ impl Worker {
                 self.notes = Some(notes);
                 self.save_config().await?;
                 info!("exit new ticket");
-                return Ok(());
-            }
-            Command::CancelSend => {
-                info!("Finish the send runner!!");
-                self.send_notify.notify_waiters();
-                self.reset_timer().await?;
                 return Ok(());
             }
             Command::ResetTimer => {

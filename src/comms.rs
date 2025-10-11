@@ -54,7 +54,6 @@ pub enum Command {
     SaveNote(String,String),
     NewNote(String,String),
     ResetTimer,
-    CancelSend,
     DeleteHidden,
     HideNote(String),
 }
