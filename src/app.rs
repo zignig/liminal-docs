@@ -32,7 +32,7 @@ impl Default for Config {
             None => {
                 println!("Directory fail!!");
                 std::process::exit(1);
-            },
+            }
         };
         // Where to keep  blobs and docs
         let store_path = match BaseDirs::new() {
@@ -253,6 +253,7 @@ impl AppState {
         }
 
         // The actual gui
+        // egui needs the outer object done first.
         // the lower panel
         self.footer(ctx);
         // the side panel
@@ -266,8 +267,9 @@ impl AppState {
             // gap
             ui.separator();
             // Modal Display
-            self.modal_display(ui);
+            self.modal_display(ctx,ui);
             // Show the current messages
+            ui.separator();
             self.show_messages(ui);
         });
     }
@@ -279,6 +281,7 @@ impl AppState {
             .default_width(160.)
             .min_width(160.0)
             .show(ctx, |ui| {
+                // needs to be scrolly.
                 ui.add_space(10.);
                 ui.strong("Notes");
                 ui.add_space(1.);
@@ -308,6 +311,7 @@ impl AppState {
                 });
                 ui.separator();
                 ui.add_space(1.);
+
                 if let Some(name) = self.notes.show(ui) {
                     self.cmd(Command::GetNote(name));
                 }
@@ -369,7 +373,7 @@ impl AppState {
     }
 
     // modal display above progress and messages
-    fn modal_display(&mut self, ui: &mut Ui) {
+    fn modal_display(&mut self,ctx: &egui::Context, ui: &mut Ui) {
         // Show mode based widgets
         match self.mode {
             AppMode::Init => {}
@@ -386,8 +390,8 @@ impl AppState {
                                 self.current_text = current_note.text.clone();
                                 self.mode = AppMode::Edit;
                             };
-                            ui.add_space(40.);
-                            if ui.button("Delete").clicked() {
+                            ui.add_space(50.);
+                            if ui.button("Hide").clicked() {
                                 let id = current_note.id.clone();
                                 self.cmd(Command::HideNote(id));
                                 self.cmd(Command::GetNotes);
@@ -437,6 +441,7 @@ impl AppState {
                             };
                             ui.add_space(10.);
                             if ui.button("Cancel").clicked() {
+                                // put the saved text back into the current note
                                 self.current_text = self.backup_text.clone();
                                 self.mode = AppMode::Idle;
                             }
@@ -450,13 +455,15 @@ impl AppState {
             }
             AppMode::Finished => {}
             AppMode::Config => {
-                self.show_config(ui);
+                self.show_config(ctx,ui);
             }
             AppMode::About => self.about(ui),
             AppMode::GetDocTicket => {
+                // TODO no way to get back here after initial
                 self.ticket_box(ui);
             }
             AppMode::ShareTicket => {
+                // TODO , currently only a RW ticked
                 if let Some(ticket) = &self.share_ticket {
                     ui.add_space(10.);
                     ui.label("Doc Share Ticket...");
@@ -475,7 +482,7 @@ impl AppState {
     }
 
     // Show the config editor ,  needs a restart to work
-    fn show_config(&mut self, ui: &mut Ui) {
+    fn show_config(&mut self,ctx: &egui::Context, ui: &mut Ui) {
         // config editor
         // LATER need a fall back config on cancel
         ui.label("Configuration");
@@ -499,6 +506,13 @@ impl AppState {
         ui.separator();
 
         if ui.button("Save Config").clicked() {
+            // Activete the vis mode.
+            if self.config.dark_mode {
+                ctx.set_visuals(Visuals::dark());
+            } else {
+                ctx.set_visuals(Visuals::light());
+            };
+
             let message = MessageDisplay {
                 text: "Config updated".to_string(),
                 mtype: MessageType::Good,
@@ -633,27 +647,31 @@ impl NotesUi {
         }
     }
 
-    // had back the selected item
+    // hand back the selected item
+    // returns the name of the selcted item as an option
+    // load the note if Some.
     fn show(&mut self, ui: &mut Ui) -> Option<String> {
         ui.add_space(10.);
         let mut val = None;
-        ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
-            let mut active_pos = usize::MAX;
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
+                let mut active_pos = usize::MAX;
 
-            for (pos, (name, active)) in self.notes.iter_mut().enumerate() {
-                if ui.toggle_value(active, name).clicked() {
-                    active_pos = pos;
-                    val = Some(name.clone());
-                }
-            }
-            // Make sure only one is active
-            if active_pos != usize::MAX {
-                for (pos, (_name, active)) in self.notes.iter_mut().enumerate() {
-                    if active_pos != pos {
-                        *active = false;
+                for (pos, (name, active)) in self.notes.iter_mut().enumerate() {
+                    if ui.toggle_value(active, name).clicked() {
+                        active_pos = pos;
+                        val = Some(name.clone());
                     }
                 }
-            }
+                // Make sure only one is active
+                if active_pos != usize::MAX {
+                    for (pos, (_name, active)) in self.notes.iter_mut().enumerate() {
+                        if active_pos != pos {
+                            *active = false;
+                        }
+                    }
+                }
+            });
         });
         return val;
     }

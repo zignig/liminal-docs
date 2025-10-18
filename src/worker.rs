@@ -2,7 +2,7 @@
 // Worker
 // --------------------------
 
-use std::{str::FromStr, sync::Arc, time::Duration};
+use std::{str::FromStr, time::Duration};
 
 use crate::comms::{Command, Config, Event, MessageOut};
 use crate::notes::Notes;
@@ -17,10 +17,7 @@ use iroh_docs::{DocTicket, engine::LiveEvent, protocol::Docs};
 use iroh_gossip::net::Gossip;
 use n0_future::{FuturesUnordered, Stream, StreamExt};
 use n0_watcher::Watcher;
-use tokio::{
-    sync::Notify,
-    time::{Instant, interval},
-};
+use tokio::time::{Instant, interval};
 use tracing::{error, info, warn};
 
 pub struct Worker {
@@ -29,7 +26,6 @@ pub struct Worker {
     pub mess: MessageOut,
     pub timer_out: Sender<TimerCommands>,
     pub blobs: BlobsProtocol,
-    pub send_notify: Arc<Notify>,
     _endpoint: Endpoint,
     pub notes: Option<Notes>,
     _gossip: Gossip,
@@ -37,7 +33,7 @@ pub struct Worker {
     pub config: Config,
     _router: Router,
     pub tasks: FuturesUnordered<n0_future::boxed::BoxFuture<()>>,
-    pub retry: usize,
+    retry: u32,
 }
 
 pub struct WorkerHandle {
@@ -125,8 +121,6 @@ impl Worker {
             .spawn(endpoint.clone(), (*blobs).clone(), gossip.clone())
             .await?;
 
-        // the notify
-        let send_notify = Arc::new(Notify::new());
         // The unbuilt notes
         let notes = None;
 
@@ -150,7 +144,6 @@ impl Worker {
             mess,
             timer_out,
             blobs,
-            send_notify,
             _endpoint: endpoint,
             _gossip: gossip,
             docs,
@@ -158,7 +151,7 @@ impl Worker {
             notes,
             _router: router,
             tasks,
-            retry: 0,
+            retry: 1,
         })
     }
 
@@ -197,6 +190,17 @@ impl Worker {
                 return Ok(());
             }
 
+            // Attach the Document to the mother ship
+            // and increment the retry
+            Command::Attach => {
+                // this happens when the system trys to reattach
+                // rather than a command from the egui
+                // weird by OK
+                if let Some(notes ) = &self.notes { 
+                    self.run_sync(notes.clone(),self.command_tx.clone()).await?;
+                }
+                return Ok(());
+            }
             // Already set up in config ( attach by id )
             Command::DocId(id) => {
                 info!("Create doc from id {}", id);
@@ -221,7 +225,7 @@ impl Worker {
                 info!("{:#?}", &doc_ticket);
                 self.config.doc_key = Some(doc_ticket.capability.id().to_string());
 
-                // Create a new author if none ( not using default notes id ) 
+                // Create a new author if none ( not using default notes id )
                 let author_id = self.author().await?;
 
                 warn!("Create the notes object");
@@ -240,20 +244,12 @@ impl Worker {
                 self.run_sync(notes.clone(), self.command_tx.clone())
                     .await?;
 
-                // nice some notes 
+                // nice some notes
                 self.notes = Some(notes);
                 // if there is a new author , push it up to the app and config file
                 self.save_config().await?;
                 info!("exit new ticket");
                 // looks good.
-                return Ok(());
-            }
-
-            // Hangover from sendme-egui , probably remove.
-            Command::CancelSend => {
-                info!("Finish the send runner!!");
-                self.send_notify.notify_waiters();
-                self.reset_timer().await?;
                 return Ok(());
             }
 
@@ -264,13 +260,13 @@ impl Worker {
                 return Ok(());
             }
 
-            // Push the altered config up to the app and soave
+            // Confing from the egui application
             Command::SendConfig(config) => {
                 self.config = config;
                 return Ok(());
             }
 
-            // Modified note 
+            // Modified note
             Command::SaveNote(id, text) => {
                 warn!("note info => \"{}\" \"{}\"", id, text);
                 if let Some(notes) = &self.notes {
@@ -279,7 +275,7 @@ impl Worker {
                 return Ok(());
             }
 
-            // Nice a new note to create...
+            // Nice, a new note to create...
             Command::NewNote(id, text) => {
                 warn!("create note => \"{}\" \"{}\"", id, text);
                 if let Some(notes) = &self.notes {
@@ -302,14 +298,13 @@ impl Worker {
             Command::GetNote(id) => {
                 if let Some(notes) = &self.notes {
                     let note = notes.get_note(id).await?;
-                    // println!("{:#?}", &note);
                     self.mess.send_note(note).await?;
                 }
                 return Ok(());
             }
 
             // Get the ticket , this is RW for now
-            // dagerous mostly, but whatever
+            // dangerous mostly, but whatever
             Command::GetShareTicket => {
                 if let Some(notes) = &self.notes {
                     let share_ticket = notes.ticket();
@@ -344,13 +339,13 @@ impl Worker {
     // Config save, push the config up to app for file save
     async fn save_config(&mut self) -> Result<()> {
         // move the config up to the gui and save.
-        warn!("Save the config");
+        warn!("Save the config {:#?}", &self.config);
         self.mess.send_config(self.config.clone()).await?;
         // println!("{:#?}", &self.config);
         Ok(())
     }
 
-    // Author maker 
+    // Author maker
     // If the author does not exist make a fresh one.
     async fn author(&mut self) -> Result<AuthorId> {
         let author = match &self.config.author {
@@ -358,15 +353,15 @@ impl Worker {
             None => {
                 let author = self.docs.author_create().await?;
                 self.config.author = Some(format!("{}", author));
+                self.save_config().await?;
                 author
             }
         };
-        self.save_config().await?;
         Ok(author)
     }
 
     // Async task attachment
-    // TODO , this needs some love 
+    // TODO , this needs some love
     // should watch the retry count and BUG out if needed.
     async fn run_sync(
         &mut self,
@@ -374,22 +369,28 @@ impl Worker {
         command_tx: async_channel::Sender<Command>,
     ) -> Result<()> {
         warn!("Start the sync task");
+        warn!("Retry {}",self.retry);
         notes.share().await?;
         let events = notes.doc_subscribe().await?;
         let mess = self.mess.clone();
-        self.tasks
-            .push(Box::pin(subscription_events(events, mess, command_tx)));
+        self.tasks.push(Box::pin(subscription_events(
+            events,
+            mess,
+            command_tx,
+            self.retry.clone(),
+        )));
         warn!("Task should be attached");
+        self.retry += 1 ;
         Ok(())
     }
 
     // -----
     // Timer functions
-    // push this into the main task pool , currently a standalone.
+    // worker interactions with the timer.
     //------
 
     async fn start_timer(&mut self) -> Result<()> {
-        // info!("Start Timer");
+        info!("Start Timer");
         self.timer_out.send(TimerCommands::Start).await?;
         Ok(())
     }
@@ -399,7 +400,6 @@ impl Worker {
         self.timer_out.send(TimerCommands::Reset).await?;
         Ok(())
     }
-
 }
 
 // Replica event runner
@@ -409,9 +409,15 @@ async fn subscription_events(
     events: impl Stream<Item = Result<LiveEvent>>,
     mess: MessageOut,
     command_tx: async_channel::Sender<Command>,
+    retry: u32,
 ) {
     warn!("Starting Event Runner");
-    let mut timer = interval(Duration::from_secs(15));
+    let mut timer = interval(Duration::from_secs(30));
+
+    // Retry logic.
+    let base: u64 = 2;
+    let mut retry_timer = interval(Duration::from_secs(base.pow(retry)));
+
     tokio::pin!(events);
     loop {
         tokio::select! {
@@ -426,6 +432,8 @@ async fn subscription_events(
                 match event {
                     LiveEvent::InsertRemote{from: _, ref entry,content_status: _} => {
                         warn!("remote entry => {:#?}",entry);
+                        // TODO push up into gui.
+                        // command_tx.send(Command::)
                     }
                     LiveEvent::SyncFinished( ref sync_event) => {
                         match  &sync_event.result  {
@@ -434,10 +442,17 @@ async fn subscription_events(
                                 mess.error(format!("{:#?}",err).as_str()).await.unwrap();
                                 mess.error("TODO try again").await.unwrap();
                                 command_tx.send(Command::ResetTimer).await.unwrap();
+
                                 // exit the loop and try to attach again.
                             },
                         };
                     },
+                    // Finshed sync (maybe) , update the notes...
+                    LiveEvent::PendingContentReady => {
+                        mess.good("Content Ready").await.unwrap();
+                        command_tx.send(Command::GetNotes).await.unwrap();
+                    },
+                    // Unhandled event , janky
                     _ => {}
                 }
                 // mess.good(format!("{:#?}",event).as_str()).await.unwrap();
@@ -445,6 +460,12 @@ async fn subscription_events(
             },
             _ = timer.tick() => {
                 warn!("tick");
+                // TODO check doc sync status and restart if needed.
+            }
+            _ = retry_timer.tick(), if retry < 5 => {
+                warn!("retry");
+                command_tx.send(Command::Attach).await.unwrap();
+                break;
             }
         }
     }
@@ -468,7 +489,6 @@ pub struct TimerTask {
 // Runs as a seperate tokio task, boops every second
 // Only sends a message time if its running
 impl TimerTask {
-
     pub fn new(mess: MessageOut) -> Self {
         Self { mess }
     }

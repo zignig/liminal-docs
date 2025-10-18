@@ -163,8 +163,14 @@ impl Notes {
         self.0.doc.subscribe().await
     }
 
+    // Are we attached ? 
+    pub async fn attached(&self) -> bool { 
+        // need to hand this to the sync retry.
+        self.0.doc.status()
+    }
+
     //  TODO , option friends ? 
-       pub async fn share(&self) -> Result<()> {
+    pub async fn share(&self) -> Result<()> {
         self.0.doc.start_sync(vec![]).await?;
         Ok(())
     }
