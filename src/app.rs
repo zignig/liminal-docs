@@ -22,18 +22,27 @@ use tracing::{info, warn};
 
 const APP_NAME: &str = "liminal-docs";
 
+// The starter config,
 impl Default for Config {
     fn default() -> Self {
+        // Path for downloads
+        // TODO , save bounce downs here
         let download_path = match UserDirs::new() {
             Some(user_dirs) => user_dirs.download_dir().unwrap().to_owned().join(APP_NAME),
-            None => std::process::exit(1),
+            None => {
+                println!("Directory fail!!");
+                std::process::exit(1);
+            },
         };
+        // Where to keep  blobs and docs
         let store_path = match BaseDirs::new() {
             Some(base_dirs) => base_dirs.data_dir().to_owned().join(APP_NAME),
             None => std::process::exit(1),
         };
+        // Don't tell anybody this one
         let secret_key = SecretKey::generate(rand::rngs::OsRng);
         let secret_key = data_encoding::HEXLOWER.encode(&secret_key.to_bytes());
+        // Config construct (check comms for the struct)
         Self {
             dark_mode: true,
             download_path,
@@ -46,16 +55,17 @@ impl Default for Config {
     }
 }
 
-// Message list max
+// Message list max (control the logs)
 const MESSAGE_MAX: usize = 3;
 
-// The application
+// The application overlord
 pub struct App {
     is_first_update: bool,
     state: AppState,
 }
 
 // The application mode
+// this controls the app state and display
 #[derive(PartialEq)]
 enum AppMode {
     Init,
@@ -70,6 +80,7 @@ enum AppMode {
     About,
 }
 
+// Text in the status bar for the mode
 impl Display for AppMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let val = match self {
@@ -89,6 +100,9 @@ impl Display for AppMode {
 }
 
 // Internal state for the application
+// there needs to be a concordance with the app state,
+// have not come across many issues, the config bounces up and down
+// becuase the worker fills in some of the iroh info
 struct AppState {
     notes: NotesUi,
     worker: WorkerHandle,
@@ -106,6 +120,8 @@ struct AppState {
 }
 
 // Make the egui impl for display
+// top level update
+// most importantly this pushes the update callback into the worker.
 impl eframe::App for App {
     fn update(&mut self, ctx: &eframe::egui::Context, _frame: &mut eframe::Frame) {
         if self.is_first_update {
@@ -128,6 +144,7 @@ impl eframe::App for App {
 
 // The application runner start,draw, etc...
 // Spawns the worker as a subthread
+// Create both halves of the application
 impl App {
     pub fn run(options: NativeOptions) -> Result<(), eframe::Error> {
         // Load the config
@@ -165,9 +182,12 @@ impl App {
 }
 
 // Actual gui code (the interface)
+//.egui is direct mode , make it on the fly every update.
+// TODO , needs some cleanup
 impl AppState {
     fn update(&mut self, ctx: &egui::Context) {
         // Events from the worker
+        // messages from below , update the state
         while let Ok(event) = self.worker.event_rx.try_recv() {
             match event {
                 Event::Message(m) => {
