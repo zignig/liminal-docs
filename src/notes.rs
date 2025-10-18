@@ -46,8 +46,8 @@ pub struct Note {
     pub is_delete: bool,
 }
 
-const MAX_NOTE_SIZE: usize = 2 * 1024;
-const MAX_TEXT_LEN: usize = 2 * 1000;
+const MAX_NOTE_SIZE: usize = 8 * 1024;
+const MAX_TEXT_LEN: usize = 8 * 1000;
 
 impl Note {
     fn from_bytes(bytes: Bytes) -> anyhow::Result<Self> {

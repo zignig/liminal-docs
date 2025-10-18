@@ -613,6 +613,7 @@ impl NotesUi {
         }
     }
 
+    // had back the selected item
     fn show(&mut self, ui: &mut Ui) -> Option<String> {
         ui.add_space(10.);
         let mut val = None;
