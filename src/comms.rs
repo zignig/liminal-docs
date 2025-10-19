@@ -8,6 +8,7 @@ use async_channel::Sender;
 use eframe::egui::{self};
 
 use egui::{Color32, Ui};
+use iroh::NodeAddr;
 use serde_derive::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
@@ -24,7 +25,7 @@ pub struct Config {
     pub secret_key: String,
     pub doc_key: Option<String>,
     pub author: Option<String>,
-    pub mothership: Option<String>,
+    pub mothership: Option<Vec<NodeAddr>>,
 }
 
 // Update Callback

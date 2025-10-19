@@ -10,15 +10,13 @@ use anyhow::Result;
 use async_channel::{Receiver, Sender};
 use iroh::protocol::Router;
 // use iroh::protocol::Router;
-use iroh::{Endpoint, SecretKey};
+use iroh::{Endpoint, NodeAddr, SecretKey};
 use iroh_blobs::BlobsProtocol;
 use iroh_docs::{AuthorId, NamespaceId};
 use iroh_docs::{DocTicket, engine::LiveEvent, protocol::Docs};
 use iroh_gossip::net::Gossip;
 use n0_future::{FuturesUnordered, Stream, StreamExt};
-use tokio::{
-    time::{Instant, interval},
-};
+use tokio::time::{Instant, interval};
 use tracing::{error, info, warn};
 
 pub struct Worker {
@@ -192,8 +190,9 @@ impl Worker {
                 // this happens when the system trys to reattach
                 // rather than a command from the egui
                 // weird by OK
-                if let Some(notes ) = &self.notes { 
-                    self.run_sync(notes.clone(),self.command_tx.clone()).await?;
+                if let Some(notes) = &self.notes {
+                    self.run_sync(notes.clone(), self.command_tx.clone())
+                        .await?;
                 }
                 return Ok(());
             }
@@ -220,7 +219,13 @@ impl Worker {
                 let doc_ticket = DocTicket::from_str(ticket.as_str())?;
                 info!("{:#?}", &doc_ticket);
                 self.config.doc_key = Some(doc_ticket.capability.id().to_string());
-
+                // just save the node ids , not the whole address
+                let nodes = doc_ticket
+                    .nodes
+                    .iter()
+                    .map(|n| NodeAddr::new(n.node_id))
+                    .collect();
+                self.config.mothership = Some(nodes);
                 // Create a new author if none ( not using default notes id )
                 let author_id = self.author().await?;
 
@@ -364,21 +369,19 @@ impl Worker {
         command_tx: async_channel::Sender<Command>,
     ) -> Result<()> {
         warn!("Start the sync task");
-        warn!("Retry {}",self.retry);
-        notes.share().await?;
+        warn!("Retry {}", self.retry);
+        if let Some(peers) = &self.config.mothership {
+            notes.share(peers.clone()).await?;
+        }
         let events = notes.doc_subscribe().await?;
         let mess = self.mess.clone();
         let attached = notes.attached().await;
-        warn!("attached? {}",attached);
+        warn!("attached? {}", attached);
         self.tasks.push(Box::pin(subscription_events(
-            events,
-            mess,
-            command_tx,
-            self.retry,
-            attached,
+            events, mess, command_tx, self.retry, attached,
         )));
         warn!("Task should be attached");
-        self.retry += 1 ;
+        self.retry += 1;
         Ok(())
     }
 
@@ -415,8 +418,8 @@ async fn subscription_events(
 
     // Retry logic.
     let base: u64 = 2;
-    let sleep_time =Duration::from_secs(base.pow(retry)); 
-    warn!("{:?}",&sleep_time);
+    let sleep_time = Duration::from_secs(base.pow(retry));
+    warn!("{:?}", &sleep_time);
 
     let retry_timer = tokio::time::sleep(sleep_time);
 

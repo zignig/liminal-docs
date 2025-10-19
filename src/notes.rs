@@ -19,6 +19,7 @@ use std::{cmp::Reverse, str::FromStr, sync::Arc};
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use bytes::Bytes;
 use chrono::{Local, Utc};
+use iroh::NodeAddr;
 use iroh_blobs::{BlobsProtocol, format::collection::Collection};
 use iroh_docs::{
     AuthorId, DocTicket, Entry, NamespaceId,
@@ -177,8 +178,8 @@ impl Notes {
     }
 
     //  TODO , option friends ?
-    pub async fn share(&self) -> Result<()> {
-        self.0.doc.start_sync(vec![]).await?;
+    pub async fn share(&self,peers: Vec<NodeAddr>) -> Result<()> {
+        self.0.doc.start_sync(peers).await?;
         Ok(())
     }
 
