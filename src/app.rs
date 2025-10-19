@@ -39,12 +39,8 @@ impl Default for Config {
             Some(base_dirs) => base_dirs.data_dir().to_owned().join(APP_NAME),
             None => std::process::exit(1),
         };
-<<<<<<< HEAD
         let secret_key = SecretKey::generate(&mut rand::rng());
-=======
         // Don't tell anybody this one
-        let secret_key = SecretKey::generate(rand::rngs::OsRng);
->>>>>>> 714d4a60e63f724b12dd0b0e45b244126890d139
         let secret_key = data_encoding::HEXLOWER.encode(&secret_key.to_bytes());
         // Config construct (check comms for the struct)
         Self {

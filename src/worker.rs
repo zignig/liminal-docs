@@ -16,15 +16,9 @@ use iroh_docs::{AuthorId, NamespaceId};
 use iroh_docs::{DocTicket, engine::LiveEvent, protocol::Docs};
 use iroh_gossip::net::Gossip;
 use n0_future::{FuturesUnordered, Stream, StreamExt};
-<<<<<<< HEAD
 use tokio::{
-    sync::Notify,
     time::{Instant, interval},
 };
-=======
-use n0_watcher::Watcher;
-use tokio::time::{Instant, interval};
->>>>>>> 714d4a60e63f724b12dd0b0e45b244126890d139
 use tracing::{error, info, warn};
 
 pub struct Worker {
@@ -254,11 +248,7 @@ impl Worker {
                 // looks good.
                 return Ok(());
             }
-<<<<<<< HEAD
-=======
-
             // Clear the timer in egui
->>>>>>> 714d4a60e63f724b12dd0b0e45b244126890d139
             Command::ResetTimer => {
                 self.reset_timer().await?;
                 self.start_timer().await?;
@@ -379,6 +369,7 @@ impl Worker {
         let events = notes.doc_subscribe().await?;
         let mess = self.mess.clone();
         let attached = notes.attached().await;
+        warn!("attached? {}",attached);
         self.tasks.push(Box::pin(subscription_events(
             events,
             mess,
@@ -424,7 +415,10 @@ async fn subscription_events(
 
     // Retry logic.
     let base: u64 = 2;
-    let retry_timer = tokio::time::sleep(Duration::from_secs(base.pow(retry)));
+    let sleep_time =Duration::from_secs(base.pow(retry)); 
+    warn!("{:?}",&sleep_time);
+    
+    let retry_timer = tokio::time::sleep(sleep_time);
 
     tokio::pin!(events);
     tokio::pin!(retry_timer);
