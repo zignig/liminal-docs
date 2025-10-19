@@ -417,7 +417,7 @@ async fn subscription_events(
     let base: u64 = 2;
     let sleep_time =Duration::from_secs(base.pow(retry)); 
     warn!("{:?}",&sleep_time);
-    
+
     let retry_timer = tokio::time::sleep(sleep_time);
 
     tokio::pin!(events);
@@ -443,9 +443,8 @@ async fn subscription_events(
                             Ok(_) => {},
                             Err(err) => {
                                 mess.error(format!("{:#?}",err).as_str()).await.unwrap();
-                                mess.error("TODO try again").await.unwrap();
-                                // command_tx.send(Command::Attach).await.unwrap();
-                                // break;
+                                command_tx.send(Command::Attach).await.unwrap();
+                                break;
                                 // exit the loop and try to attach again.
                             },
                         };
@@ -463,7 +462,6 @@ async fn subscription_events(
             },
             _ = timer.tick() => {
                 warn!("tick");
-                // TODO check doc sync status and restart if needed.
             }
             _ = &mut retry_timer, if (!attached & (retry < 5)) => {
                 warn!("retry");
