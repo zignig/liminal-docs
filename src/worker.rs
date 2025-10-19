@@ -373,11 +373,13 @@ impl Worker {
         notes.share().await?;
         let events = notes.doc_subscribe().await?;
         let mess = self.mess.clone();
+        let attached = notes.attached().await;
         self.tasks.push(Box::pin(subscription_events(
             events,
             mess,
             command_tx,
-            self.retry.clone(),
+            self.retry,
+            attached,
         )));
         warn!("Task should be attached");
         self.retry += 1 ;
@@ -410,15 +412,17 @@ async fn subscription_events(
     mess: MessageOut,
     command_tx: async_channel::Sender<Command>,
     retry: u32,
+    attached: bool,
 ) {
     warn!("Starting Event Runner");
     let mut timer = interval(Duration::from_secs(30));
 
     // Retry logic.
     let base: u64 = 2;
-    let mut retry_timer = interval(Duration::from_secs(base.pow(retry)));
+    let retry_timer = tokio::time::sleep(Duration::from_secs(base.pow(retry)));
 
     tokio::pin!(events);
+    tokio::pin!(retry_timer);
     loop {
         tokio::select! {
             Some(event) = events.next() => {
@@ -441,8 +445,8 @@ async fn subscription_events(
                             Err(err) => {
                                 mess.error(format!("{:#?}",err).as_str()).await.unwrap();
                                 mess.error("TODO try again").await.unwrap();
-                                command_tx.send(Command::ResetTimer).await.unwrap();
-
+                                // command_tx.send(Command::Attach).await.unwrap();
+                                // break;
                                 // exit the loop and try to attach again.
                             },
                         };
@@ -462,7 +466,7 @@ async fn subscription_events(
                 warn!("tick");
                 // TODO check doc sync status and restart if needed.
             }
-            _ = retry_timer.tick(), if retry < 5 => {
+            _ = &mut retry_timer, if (!attached & (retry < 5)) => {
                 warn!("retry");
                 command_tx.send(Command::Attach).await.unwrap();
                 break;

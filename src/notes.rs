@@ -163,18 +163,24 @@ impl Notes {
         self.0.doc.subscribe().await
     }
 
-    // Are we attached ? 
-    pub async fn attached(&self) -> bool { 
-        // need to hand this to the sync retry.
-        self.0.doc.status()
+    // Are we attached ?
+    pub async fn attached(&self) -> bool {
+        match self.0.doc.status().await {
+            Ok(status) => {
+                return status.sync;
+            }
+            Err(e) => {
+                warn!("{:#?}", e);
+                return false;
+            }
+        };
     }
 
-    //  TODO , option friends ? 
+    //  TODO , option friends ?
     pub async fn share(&self) -> Result<()> {
         self.0.doc.start_sync(vec![]).await?;
         Ok(())
     }
-    
 
     pub async fn create(&self, id: String, text: String) -> Result<()> {
         if text.len() > MAX_TEXT_LEN {
@@ -294,7 +300,7 @@ impl Notes {
         self.update_bytes(id.clone(), note).await
     }
 
-    // Doc data manipulation , low level data work 
+    // Doc data manipulation , low level data work
 
     // for creation on new note
     async fn insert_bytes(&self, key: impl AsRef<[u8]>, value: Bytes) -> Result<()> {
@@ -375,4 +381,4 @@ impl Notes {
     // End direct doc manipulation
 }
 
-// mmm notes. 
+// mmm notes.
