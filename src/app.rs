@@ -22,18 +22,31 @@ use tracing::{info, warn};
 
 const APP_NAME: &str = "liminal-docs";
 
+// The starter config,
 impl Default for Config {
     fn default() -> Self {
+        // Path for downloads
+        // TODO , save bounce downs here
         let download_path = match UserDirs::new() {
             Some(user_dirs) => user_dirs.download_dir().unwrap().to_owned().join(APP_NAME),
-            None => std::process::exit(1),
+            None => {
+                println!("Directory fail!!");
+                std::process::exit(1);
+            }
         };
+        // Where to keep  blobs and docs
         let store_path = match BaseDirs::new() {
             Some(base_dirs) => base_dirs.data_dir().to_owned().join(APP_NAME),
             None => std::process::exit(1),
         };
+<<<<<<< HEAD
         let secret_key = SecretKey::generate(&mut rand::rng());
+=======
+        // Don't tell anybody this one
+        let secret_key = SecretKey::generate(rand::rngs::OsRng);
+>>>>>>> 714d4a60e63f724b12dd0b0e45b244126890d139
         let secret_key = data_encoding::HEXLOWER.encode(&secret_key.to_bytes());
+        // Config construct (check comms for the struct)
         Self {
             dark_mode: true,
             download_path,
@@ -46,16 +59,17 @@ impl Default for Config {
     }
 }
 
-// Message list max
+// Message list max (control the logs)
 const MESSAGE_MAX: usize = 3;
 
-// The application
+// The application overlord
 pub struct App {
     is_first_update: bool,
     state: AppState,
 }
 
 // The application mode
+// this controls the app state and display
 #[derive(PartialEq)]
 enum AppMode {
     Init,
@@ -70,6 +84,7 @@ enum AppMode {
     About,
 }
 
+// Text in the status bar for the mode
 impl Display for AppMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let val = match self {
@@ -89,6 +104,9 @@ impl Display for AppMode {
 }
 
 // Internal state for the application
+// there needs to be a concordance with the app state,
+// have not come across many issues, the config bounces up and down
+// becuase the worker fills in some of the iroh info
 struct AppState {
     notes: NotesUi,
     worker: WorkerHandle,
@@ -106,6 +124,8 @@ struct AppState {
 }
 
 // Make the egui impl for display
+// top level update
+// most importantly this pushes the update callback into the worker.
 impl eframe::App for App {
     fn update(&mut self, ctx: &eframe::egui::Context, _frame: &mut eframe::Frame) {
         if self.is_first_update {
@@ -128,6 +148,7 @@ impl eframe::App for App {
 
 // The application runner start,draw, etc...
 // Spawns the worker as a subthread
+// Create both halves of the application
 impl App {
     pub fn run(options: NativeOptions) -> Result<(), eframe::Error> {
         // Load the config
@@ -165,9 +186,12 @@ impl App {
 }
 
 // Actual gui code (the interface)
+//.egui is direct mode , make it on the fly every update.
+// TODO , needs some cleanup
 impl AppState {
     fn update(&mut self, ctx: &egui::Context) {
         // Events from the worker
+        // messages from below , update the state
         while let Ok(event) = self.worker.event_rx.try_recv() {
             match event {
                 Event::Message(m) => {
@@ -233,6 +257,7 @@ impl AppState {
         }
 
         // The actual gui
+        // egui needs the outer object done first.
         // the lower panel
         self.footer(ctx);
         // the side panel
@@ -246,8 +271,9 @@ impl AppState {
             // gap
             ui.separator();
             // Modal Display
-            self.modal_display(ui);
+            self.modal_display(ctx,ui);
             // Show the current messages
+            ui.separator();
             self.show_messages(ui);
         });
     }
@@ -259,6 +285,7 @@ impl AppState {
             .default_width(160.)
             .min_width(160.0)
             .show(ctx, |ui| {
+                // needs to be scrolly.
                 ui.add_space(10.);
                 ui.strong("Notes");
                 ui.add_space(1.);
@@ -288,6 +315,7 @@ impl AppState {
                 });
                 ui.separator();
                 ui.add_space(1.);
+
                 if let Some(name) = self.notes.show(ui) {
                     self.cmd(Command::GetNote(name));
                 }
@@ -349,7 +377,7 @@ impl AppState {
     }
 
     // modal display above progress and messages
-    fn modal_display(&mut self, ui: &mut Ui) {
+    fn modal_display(&mut self,ctx: &egui::Context, ui: &mut Ui) {
         // Show mode based widgets
         match self.mode {
             AppMode::Init => {}
@@ -366,8 +394,8 @@ impl AppState {
                                 self.current_text = current_note.text.clone();
                                 self.mode = AppMode::Edit;
                             };
-                            ui.add_space(40.);
-                            if ui.button("Delete").clicked() {
+                            ui.add_space(50.);
+                            if ui.button("Hide").clicked() {
                                 let id = current_note.id.clone();
                                 self.cmd(Command::HideNote(id));
                                 self.cmd(Command::GetNotes);
@@ -417,6 +445,7 @@ impl AppState {
                             };
                             ui.add_space(10.);
                             if ui.button("Cancel").clicked() {
+                                // put the saved text back into the current note
                                 self.current_text = self.backup_text.clone();
                                 self.mode = AppMode::Idle;
                             }
@@ -430,13 +459,15 @@ impl AppState {
             }
             AppMode::Finished => {}
             AppMode::Config => {
-                self.show_config(ui);
+                self.show_config(ctx,ui);
             }
             AppMode::About => self.about(ui),
             AppMode::GetDocTicket => {
+                // TODO no way to get back here after initial
                 self.ticket_box(ui);
             }
             AppMode::ShareTicket => {
+                // TODO , currently only a RW ticked
                 if let Some(ticket) = &self.share_ticket {
                     ui.add_space(10.);
                     ui.label("Doc Share Ticket...");
@@ -455,7 +486,7 @@ impl AppState {
     }
 
     // Show the config editor ,  needs a restart to work
-    fn show_config(&mut self, ui: &mut Ui) {
+    fn show_config(&mut self,ctx: &egui::Context, ui: &mut Ui) {
         // config editor
         // LATER need a fall back config on cancel
         ui.label("Configuration");
@@ -479,6 +510,13 @@ impl AppState {
         ui.separator();
 
         if ui.button("Save Config").clicked() {
+            // Activete the vis mode.
+            if self.config.dark_mode {
+                ctx.set_visuals(Visuals::dark());
+            } else {
+                ctx.set_visuals(Visuals::light());
+            };
+
             let message = MessageDisplay {
                 text: "Config updated".to_string(),
                 mtype: MessageType::Good,
@@ -613,26 +651,31 @@ impl NotesUi {
         }
     }
 
+    // hand back the selected item
+    // returns the name of the selcted item as an option
+    // load the note if Some.
     fn show(&mut self, ui: &mut Ui) -> Option<String> {
         ui.add_space(10.);
         let mut val = None;
-        ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
-            let mut active_pos = usize::MAX;
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
+                let mut active_pos = usize::MAX;
 
-            for (pos, (name, active)) in self.notes.iter_mut().enumerate() {
-                if ui.toggle_value(active, name).clicked() {
-                    active_pos = pos;
-                    val = Some(name.clone());
-                }
-            }
-            // Make sure only one is active
-            if active_pos != usize::MAX {
-                for (pos, (_name, active)) in self.notes.iter_mut().enumerate() {
-                    if active_pos != pos {
-                        *active = false;
+                for (pos, (name, active)) in self.notes.iter_mut().enumerate() {
+                    if ui.toggle_value(active, name).clicked() {
+                        active_pos = pos;
+                        val = Some(name.clone());
                     }
                 }
-            }
+                // Make sure only one is active
+                if active_pos != usize::MAX {
+                    for (pos, (_name, active)) in self.notes.iter_mut().enumerate() {
+                        if active_pos != pos {
+                            *active = false;
+                        }
+                    }
+                }
+            });
         });
         return val;
     }

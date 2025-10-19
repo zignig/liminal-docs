@@ -46,8 +46,8 @@ pub struct Note {
     pub is_delete: bool,
 }
 
-const MAX_NOTE_SIZE: usize = 2 * 1024;
-const MAX_TEXT_LEN: usize = 2 * 1000;
+const MAX_NOTE_SIZE: usize = 8 * 1024;
+const MAX_TEXT_LEN: usize = 8 * 1000;
 
 impl Note {
     fn from_bytes(bytes: Bytes) -> anyhow::Result<Self> {
@@ -82,8 +82,6 @@ impl Note {
         }
     }
 }
-
-// All the keys need to be null byte extended , ? I know right
 
 // Notes outer
 #[derive(Debug, Clone)]
@@ -126,6 +124,7 @@ impl Notes {
         })))
     }
 
+    // aready have an id load the docs set
     pub async fn from_id(
         id: NamespaceId,
         author: AuthorId,
@@ -148,24 +147,41 @@ impl Notes {
             author,
         })))
     }
+
     #[allow(dead_code)]
     pub fn id(&self) -> [u8; 32] {
         self.0.doc.id().to_bytes()
     }
 
+    // this is a write ticket for now .
     pub fn ticket(&self) -> String {
         self.0.ticket.to_string()
     }
 
+    // this needs more nuance , for reconnection
     pub async fn doc_subscribe(&self) -> Result<impl Stream<Item = Result<LiveEvent>> + use<>> {
         self.0.doc.subscribe().await
     }
 
-       pub async fn share(&self) -> Result<()> {
+    // Are we attached ?
+    pub async fn attached(&self) -> bool {
+        match self.0.doc.status().await {
+            Ok(status) => {
+                return status.sync;
+            }
+            Err(e) => {
+                warn!("{:#?}", e);
+                return false;
+            }
+        };
+    }
+
+    //  TODO , option friends ?
+    pub async fn share(&self) -> Result<()> {
         self.0.doc.start_sync(vec![]).await?;
         Ok(())
     }
-    
+
     pub async fn create(&self, id: String, text: String) -> Result<()> {
         if text.len() > MAX_TEXT_LEN {
             bail!("text is too long, max size is {MAX_TEXT_LEN}");
@@ -181,10 +197,10 @@ impl Notes {
         self.insert_bytes(id.as_bytes(), note.as_bytes()?).await
     }
 
+    // Get a list of the notes that exists.
     pub async fn get_notes(&self) -> Result<Vec<Note>> {
         let entries = self.0.doc.get_many(Query::single_latest_per_key()).await?;
         let mut notes = Vec::new();
-        // TODO remove once entries are unpin !
         tokio::pin!(entries);
         while let Some(entry) = entries.next().await {
             let entry = entry?;
@@ -199,7 +215,7 @@ impl Notes {
         Ok(notes)
     }
 
-    // Just get a vec
+    // Just get a vec of the notes for the left hand side menu.
     pub async fn get_note_vec(&self) -> Vec<String> {
         let note_list_res = self.get_notes().await;
         let items = match note_list_res {
@@ -209,6 +225,7 @@ impl Notes {
         items
     }
 
+    //Grab the actual note
     pub async fn get_note(&self, id: String) -> Result<Note> {
         let mut ex_key = id.as_bytes().to_vec();
         ex_key.push(0);
@@ -226,6 +243,7 @@ impl Notes {
         }
     }
 
+    // Note has changed check and save.
     pub async fn update_note(&self, id: String, text: String) -> Result<()> {
         if text.len() > MAX_TEXT_LEN {
             bail!("text is too long, max size is {MAX_TEXT_LEN}");
@@ -245,6 +263,7 @@ impl Notes {
         }
     }
 
+    // Mark hidden for later deletion.
     #[allow(dead_code)]
     pub async fn delete_note(&self, id: String) -> Result<()> {
         // let note = self.get_note(id.clone()).await?;
@@ -253,6 +272,8 @@ impl Notes {
         Ok(())
     }
 
+    // Delete hidden notes , this should bounce down first
+    // for backup.
     pub async fn delete_hidden(&self) -> Result<()> {
         let entries = self.0.doc.get_many(Query::single_latest_per_key()).await?;
         tokio::pin!(entries);
@@ -272,15 +293,16 @@ impl Notes {
         Ok(())
     }
 
+    // Set hidden for later deletion.
     pub async fn set_delete(&self, id: String) -> Result<()> {
         let mut note = self.get_note(id.clone()).await?;
         note.is_delete = !note.is_delete;
         self.update_bytes(id.clone(), note).await
     }
 
-    // Doc data manipulation
+    // Doc data manipulation , low level data work
 
-    // TODO null byte the id for weird reasons
+    // for creation on new note
     async fn insert_bytes(&self, key: impl AsRef<[u8]>, value: Bytes) -> Result<()> {
         // null byte exend the key
         let mut ex_key = key.as_ref().to_vec();
@@ -289,11 +311,13 @@ impl Notes {
         Ok(())
     }
 
+    // already have the note , update the data.
     async fn update_bytes(&self, key: impl AsRef<[u8]>, note: Note) -> Result<()> {
         let content = note.as_bytes()?;
         self.insert_bytes(key, content).await
     }
 
+    // get a note from the doc construct.
     async fn note_from_entry(&self, entry: &Entry) -> Result<Note> {
         let id = String::from_utf8(entry.key().to_owned()).context("invalid key")?;
         match self.0.blobs.get_bytes(entry.content_hash()).await {
@@ -303,11 +327,13 @@ impl Notes {
     }
 
     // Save out the docs as date stamped .md files
+    // need to add a bit more metadata here.
+    // crete the collection and check if anything has changed;
+    // if not don't save...
     #[allow(dead_code)]
     pub async fn bounce_down(&self) -> Result<()> {
         let entries = self.0.doc.get_many(Query::single_latest_per_key()).await?;
         let mut notes = Vec::new();
-        // TODO remove once entries are unpin !
         tokio::pin!(entries);
         while let Some(entry) = entries.next().await {
             let entry = entry?;
@@ -335,6 +361,8 @@ impl Notes {
         Ok(())
     }
 
+    // TODO , need to specify the note backup the grab
+    // this should be a "recovery" interface.
     #[allow(dead_code)]
     pub async fn bounce_up(&self) -> Result<()> {
         let tag = match self.0.blobs.tags().get("notes").await? {
@@ -352,3 +380,5 @@ impl Notes {
     }
     // End direct doc manipulation
 }
+
+// mmm notes.

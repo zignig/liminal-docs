@@ -15,6 +15,7 @@ use crate::notes::Note;
 
 // Application Configuration
 // Application saved config
+// Default impl in app.rs for visibilibly
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Config {
     pub dark_mode: bool,
@@ -29,7 +30,10 @@ pub struct Config {
 // Update Callback
 type UpdateCallback = Box<dyn Fn() + Send + 'static>;
 
-// Incoming events
+// Outgoing event to the application
+// TODO , some of the naming convention semaitics are wrong
+// Chose a side , (probably the egui , send == from , get == to)
+// rework
 pub enum Event {
     Message(MessageDisplay),
     SendConfig(Config),
@@ -42,7 +46,8 @@ pub enum Event {
     SetReady,
 }
 
-// Outgoing Commands
+// Incoming commands from the egui interface
+// and the actor loop on  replication events.
 pub enum Command {
     Setup { callback: UpdateCallback },
     DocTicket(String),
@@ -56,9 +61,11 @@ pub enum Command {
     ResetTimer,
     DeleteHidden,
     HideNote(String),
+    Attach,
 }
 
 // Message types
+// display messsages in the egui
 #[derive(Clone)]
 pub enum MessageType {
     Good,
@@ -66,23 +73,27 @@ pub enum MessageType {
     Error,
 }
 
-// egui display struct
+// egui display struct.
 #[derive(Clone)]
 pub struct MessageDisplay {
     pub text: String,
     pub mtype: MessageType,
 }
 
-// Messaging
+// Messaging, displayed messages in the egui.
+// this wraps the communications from worker to gui
+// it's a little boilerplatey but it bridges nicely
 #[derive(Clone)]
 pub struct MessageOut(Arc<Mutex<MessageInner>>);
 
+// Arc for cloneability.
 pub struct MessageInner {
     event_tx: Sender<Event>,
     callback: Option<UpdateCallback>,
 }
 
 impl MessageOut {
+    // Make the original message machine
     pub fn new(event_tx: Sender<Event>) -> Self {
         Self(Arc::new(Mutex::new(MessageInner {
             event_tx,
@@ -90,12 +101,16 @@ impl MessageOut {
         })))
     }
 
+    // For  the gui to be interactive a callback 
+    // needs to be run when a message is sent.
+    // for interior mutability this needs to be wrapped in a mutex
     pub async fn set_callback(&self, callback: UpdateCallback) -> Result<()> {
         let mut value = self.0.lock().await;
         value.callback = Some(callback);
         Ok(())
     }
 
+    // Function for sending a message ( Extracted for the mutex)
     async fn emit(&self, event: Event) -> Result<()> {
         let binding = self.0.lock().await;
         if let Some(callback) = &binding.callback {
@@ -105,6 +120,7 @@ impl MessageOut {
         Ok(())
     }
 
+    // Yellow text
     pub async fn info(&self, message: &str) -> Result<()> {
         self.emit(Event::Message(MessageDisplay {
             text: message.to_string(),
@@ -114,6 +130,7 @@ impl MessageOut {
         Ok(())
     }
 
+    // Green text 
     pub async fn good(&self, message: &str) -> Result<()> {
         self.emit(Event::Message(MessageDisplay {
             text: message.to_string(),
@@ -132,6 +149,7 @@ impl MessageOut {
         Ok(())
     }
 
+    // Say finished to the gui (hangove from sendme)
     pub async fn finished(&self) -> Result<()> {
         self.emit(Event::Message(MessageDisplay {
             text: "Finished...".to_string(),
@@ -154,7 +172,7 @@ impl MessageOut {
         Ok(())
     }
 
-    // Send the config up to the gui.
+    // Send the config up to the gui and save to file in app
     pub async fn send_config(&self, config: Config) -> Result<()> {
         self.emit(Event::SendConfig(config)).await?;
         Ok(())
